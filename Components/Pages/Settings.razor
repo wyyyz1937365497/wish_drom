@@ -1,0 +1,311 @@
+@page "/settings"
+@using Microsoft.Maui.Storage
+@inject IChatService ChatService
+@inject NavigationManager Navigation
+
+<div class="settings-container">
+    <h1>⚙️ 设置</h1>
+
+    <div class="settings-section">
+        <h2>AI 配置</h2>
+        <p class="section-desc">配置 OpenAI API Key 以启用智能助手功能</p>
+
+        <div class="form-group">
+            <label for="apiKey">API Key</label>
+            <input type="password"
+                   id="apiKey"
+                   class="form-control"
+                   placeholder="sk-..."
+                   @bind="apiKeyInput"
+                   @bind:event="oninput">
+            <small class="form-text">您的 API Key 将安全存储在设备本地</small>
+        </div>
+
+        <div class="form-group">
+            <label for="modelId">模型 ID</label>
+            <select id="modelId" class="form-control" @bind="modelIdInput">
+                <option value="gpt-4o-mini">gpt-4o-mini (推荐)</option>
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="gpt-4-turbo">gpt-4-turbo</option>
+                <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+            </select>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-primary" @onclick="SaveSettings" disabled="isSaving">
+                @if (isSaving)
+                {
+                    <span>保存中...</span>
+                }
+                else
+                {
+                    <span>保存配置</span>
+                }
+            </button>
+            @if (isConfigured)
+            {
+                <button class="btn-danger" @onclick="ClearSettings">清除配置</button>
+            }
+        </div>
+
+        @if (saveMessage != null)
+        {
+            <div class="alert alert-@saveMessage.Type">@saveMessage.Text</div>
+        }
+    </div>
+
+    <div class="settings-section">
+        <h2>数据管理</h2>
+        <p class="section-desc">管理本地存储的数据</p>
+
+        <div class="info-card">
+            <div class="info-item">
+                <span class="info-label">📚 课程数量</span>
+                <span class="info-value">@courseCount 门</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">🎉 活动数量</span>
+                <span class="info-value">@activityCount 条</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">💬 聊天记录</span>
+                <span class="info-value">@chatHistoryCount 条</span>
+            </div>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-secondary" @onclick="NavigateToSync">同步数据</button>
+        </div>
+    </div>
+
+    <div class="settings-section">
+        <h2>关于</h2>
+        <p class="section-desc">智能校园助手 v1.0</p>
+        <p>基于 .NET MAUI + Blazor + Semantic Kernel 构建</p>
+        <p>所有数据均存储在本地，保护您的隐私</p>
+    </div>
+</div>
+
+<style>
+    .settings-container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #f5f5f5;
+        min-height: 100vh;
+    }
+
+    .settings-container h1 {
+        color: #512BD4;
+        margin-bottom: 24px;
+        text-align: center;
+    }
+
+    .settings-section {
+        background: white;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+
+    .settings-section h2 {
+        font-size: 18px;
+        color: #333;
+        margin-bottom: 8px;
+    }
+
+    .section-desc {
+        color: #666;
+        font-size: 14px;
+        margin-bottom: 16px;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+        color: #333;
+    }
+
+    .form-control {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+
+    .form-control:focus {
+        outline: none;
+        border-color: #512BD4;
+    }
+
+    .form-text {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        color: #888;
+    }
+
+    .button-group {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+    }
+
+    .btn-primary, .btn-secondary, .btn-danger {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 500;
+        flex: 1;
+    }
+
+    .btn-primary {
+        background-color: #512BD4;
+        color: white;
+    }
+
+    .btn-secondary {
+        background-color: #6c757d;
+        color: white;
+    }
+
+    .btn-danger {
+        background-color: #dc3545;
+        color: white;
+    }
+
+    .btn-primary:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .alert {
+        padding: 12px;
+        border-radius: 8px;
+        margin-top: 12px;
+        font-size: 14px;
+    }
+
+    .alert-success {
+        background-color: #d4edda;
+        color: #155724;
+    }
+
+    .alert-error {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+
+    .info-card {
+        background-color: #f8f9fa;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+    }
+
+    .info-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #e9ecef;
+    }
+
+    .info-item:last-child {
+        border-bottom: none;
+    }
+
+    .info-label {
+        color: #666;
+    }
+
+    .info-value {
+        font-weight: 500;
+        color: #512BD4;
+    }
+</style>
+
+@code {
+    private string apiKeyInput = string.Empty;
+    private string modelIdInput = "gpt-4o-mini";
+    private bool isSaving = false;
+    private bool isConfigured = false;
+    private (string Type, string Text)? saveMessage;
+    private int courseCount = 0;
+    private int activityCount = 0;
+    private int chatHistoryCount = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isConfigured = await ChatService.IsConfiguredAsync();
+
+        if (isConfigured)
+        {
+            var existingKey = await SecureStorage.Default.GetAsync("openai_api_key");
+            var existingModel = await SecureStorage.Default.GetAsync("openai_model_id");
+
+            apiKeyInput = existingKey ?? string.Empty;
+            modelIdInput = existingModel ?? "gpt-4o-mini";
+        }
+
+        await LoadDataStats();
+    }
+
+    private async Task LoadDataStats()
+    {
+        // TODO: 从数据库加载数据统计
+        // 这里暂时使用模拟数据
+        await Task.CompletedTask;
+    }
+
+    private async Task SaveSettings()
+    {
+        if (string.IsNullOrWhiteSpace(apiKeyInput))
+        {
+            saveMessage = ("error", "请输入 API Key");
+            return;
+        }
+
+        isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            await ChatService.ConfigureAsync(apiKeyInput, modelIdInput);
+            isConfigured = true;
+            saveMessage = ("success", "配置已保存");
+        }
+        catch (Exception ex)
+        {
+            saveMessage = ("error", $"保存失败: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ClearSettings()
+    {
+        SecureStorage.Default.Remove("openai_api_key");
+        SecureStorage.Default.Remove("openai_model_id");
+        apiKeyInput = string.Empty;
+        isConfigured = false;
+        saveMessage = ("success", "配置已清除");
+        StateHasChanged();
+    }
+
+    private void NavigateToSync()
+    {
+        Navigation.NavigateTo("/sync");
+    }
+}
