@@ -17,7 +17,7 @@
             </div>
             @if (messages.Count > 0)
             {
-                <button class="icon-btn" @onclick="ClearChat" title="清空聊天">
+                <button class="icon-btn" @onclick="@(() => ClearChat())" title="清空聊天">
                     <span>🗑️</span>
                 </button>
             }
@@ -34,9 +34,9 @@
                 <p class="empty-desc">我是你的智能校园助手，可以帮你：</p>
 
                 <div class="suggestion-chips">
-                    <button class="chip" @onclick="SendSuggestion">今天有什么课？</button>
-                    <button class="chip" @onclick="SendSuggestion">本周活动</button>
-                    <button class="chip" @onclick="SendSuggestion">学习建议</button>
+                    <button class="chip" @onclick="@(() => SendSuggestion("今天有什么课？"))">今天有什么课？</button>
+                    <button class="chip" @onclick="@(() => SendSuggestion("本周活动"))">本周活动</button>
+                    <button class="chip" @onclick="@(() => SendSuggestion("学习建议"))">学习建议</button>
                 </div>
 
                 @if (!isConfigured)
@@ -44,7 +44,7 @@
                     <div class="config-card">
                         <span class="config-icon">⚠️</span>
                         <p class="config-text">请先配置 API Key</p>
-                        <button class="config-btn" @onclick="NavigateToSettings">去设置</button>
+                        <button class="config-btn" @onclick="@(() => NavigateToSettings())">去设置</button>
                     </div>
                 }
             </div>
@@ -102,18 +102,18 @@
                        placeholder="输入消息..."
                        @bind="inputText"
                        @bind:event="oninput"
-                       @onkeypress="HandleKeyPress"
-                       @onfocus="InputFocused"
-                       @onblur="InputBlurred"
-                       disabled="isStreaming">
-                <button class="send-btn" @onclick="SendMessage" disabled="isStreaming || string.IsNullOrEmpty(inputText)">
+                       @onkeypress="@((e) => HandleKeyPress(e))"
+                       @onfocus="@(() => InputFocused())"
+                       @onblur="@(() => InputBlurred())"
+                       @disabled="isStreaming">
+                <button class="send-btn" @onclick="@(() => SendMessage())" @disabled="(isStreaming || string.IsNullOrEmpty(inputText))">
                     <span class="send-icon">@(isStreaming ? "⏳" : "➤")</span>
                 </button>
             </div>
         }
         else
         {
-            <button class="setup-banner" @onclick="NavigateToSettings">
+            <button class="setup-banner" @onclick="@(() => NavigateToSettings())">
                 <span class="banner-icon">⚙️</span>
                 <span class="banner-text">点击配置 API Key</span>
                 <span class="banner-arrow">➤</span>
@@ -612,9 +612,10 @@
         }
     }
 
-    private void SendSuggestion()
+    private void SendSuggestion(string suggestion)
     {
-        // 预设建议消息
+        inputText = suggestion;
+        StateHasChanged();
     }
 
     private void ClearChat()

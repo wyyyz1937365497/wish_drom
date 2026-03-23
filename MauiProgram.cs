@@ -36,11 +36,8 @@ namespace wish_drom
             // 聊天服务
             builder.Services.AddSingleton<IChatService, ChatService>();
 
-            // TODO: 课表和活动服务将在后续实现
-            // builder.Services.AddSingleton<IScheduleService, ScheduleService>();
-            // builder.Services.AddSingleton<IActivityService, ActivityService>();
-            // builder.Services.AddSingleton<IDataCaptureService, DataCaptureService>();
-            // builder.Services.AddSingleton<IScheduleParser, DefaultScheduleParser>();
+            // 数据抓取服务
+            builder.Services.AddSingleton<IDataCaptureService, DataCaptureService>();
 
             return builder.Build();
         }

@@ -1,10 +1,14 @@
 @page "/sync"
+@using wish_drom.Models
+@using wish_drom.Services.Interfaces
+@using System.Diagnostics
+@inject IDataCaptureService DataCaptureService
 @inject NavigationManager Navigation
 
 <div class="sync-page">
     @* 顶部应用栏 *@
     <header class="app-bar">
-        <button class="back-btn" @onclick="NavigateToChat">
+        <button class="back-btn" @onclick="@(() => NavigateBack())">
             <span class="back-icon">←</span>
         </button>
         <h1 class="app-title">数据同步</h1>
@@ -13,57 +17,79 @@
 
     @* 内容区域 *@
     <div class="sync-content">
-        @* 开发中状态 *@
-        <div class="coming-soon">
-            <div class="illustration">
-                <div class="icon-wrapper">
-                    <span class="main-icon">🚧</span>
-                </div>
-            </div>
+        @if (currentStep == SyncStep.SelectDataSource)
+        {
+            @* 数据源选择 - 两列网格布局 *@
+            <section class="section">
+                <h2 class="section-title">选择数据源</h2>
+                <p class="section-desc">点击下方按钮，在 WebView 中登录并提取数据</p>
 
-            <h2 class="title">功能开发中</h2>
-            <p class="subtitle">数据同步功能正在紧张开发中，敬请期待！</p>
-
-            @* 功能预览 *@
-            <div class="feature-list">
-                <div class="feature-item">
-                    <div class="feature-icon course">📚</div>
-                    <div class="feature-info">
-                        <span class="feature-title">课表同步</span>
-                        <span class="feature-desc">从教务系统一键导入课程</span>
+                @if (registeredSources.Any())
+                {
+                    <div class="datasource-grid">
+                        @foreach (var source in registeredSources)
+                        {
+                            <button class="datasource-card" @onclick="@(() => SelectDataSource(source.Id))">
+                                <div class="datasource-icon">
+                                    @if (!string.IsNullOrEmpty(source.FaviconUrl))
+                                    {
+                                        <img src="@source.FaviconUrl" class="favicon-img" alt="@source.DisplayName" />
+                                    }
+                                    else
+                                    {
+                                        <span class="favicon-placeholder">@source.GetFaviconLetter()</span>
+                                    }
+                                </div>
+                                <div class="datasource-info">
+                                    <span class="datasource-name">@source.DisplayName</span>
+                                </div>
+                            </button>
+                        }
                     </div>
-                </div>
-
-                <div class="feature-item">
-                    <div class="feature-icon activity">🎉</div>
-                    <div class="feature-info">
-                        <span class="feature-title">活动聚合</span>
-                        <span class="feature-desc">自动收集校园活动信息</span>
+                }
+                else
+                {
+                    <div class="empty-state">
+                        <span class="empty-icon">📭</span>
+                        <p class="empty-text">暂无已注册的数据源</p>
+                        <p class="empty-hint">请联系管理员添加数据提供者</p>
                     </div>
+                }
+            </section>
+        }
+        else if (currentStep == SyncStep.Syncing)
+        {
+            @* 同步状态提示 *@
+            <section class="section">
+                <div class="status-container">
+                    @if (isSyncing)
+                    {
+                        <div class="syncing-wrapper">
+                            <div class="syncing-spinner">⟳</div>
+                            <h3 class="status-title">正在同步</h3>
+                            <p class="status-desc">请在 WebView 中完成操作</p>
+                        </div>
+                    }
+                    else if (syncSuccess)
+                    {
+                        <div class="success-wrapper">
+                            <div class="success-icon">✓</div>
+                            <h3 class="status-title">同步成功</h3>
+                            <p class="status-desc">数据已成功提取并保存</p>
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(syncError))
+                    {
+                        <div class="error-wrapper">
+                            <div class="error-icon">⚠️</div>
+                            <h3 class="status-title">同步失败</h3>
+                            <p class="status-desc">@syncError</p>
+                            <button class="retry-btn" @onclick="@(() => GoBack())">返回重试</button>
+                        </div>
+                    }
                 </div>
-
-                <div class="feature-item">
-                    <div class="feature-icon privacy">🔒</div>
-                    <div class="feature-info">
-                        <span class="feature-title">隐私保护</span>
-                        <span class="feature-desc">数据仅存储在设备本地</span>
-                    </div>
-                </div>
-            </div>
-
-            @* 说明卡片 *@
-            <div class="info-card">
-                <span class="info-icon">💡</span>
-                <div class="info-content">
-                    <p>完成后，您可以通过 WebView 登录教务系统，智能解析课表和活动数据。</p>
-                </div>
-            </div>
-
-            @* 返回按钮 *@
-            <button class="return-btn" @onclick="NavigateToChat">
-                <span>💬 返回聊天</span>
-            </button>
-        </div>
+            </section>
+        }
     </div>
 </div>
 
@@ -102,10 +128,6 @@
         margin-right: 8px;
     }
 
-    .back-btn:active {
-        opacity: 0.7;
-    }
-
     .app-title {
         font-size: 20px;
         font-weight: 600;
@@ -122,180 +144,256 @@
         flex: 1;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
-        padding: 24px 16px;
+        padding: 16px;
     }
 
-    /* ==================== 开发中状态 ==================== */
-    .coming-soon {
+    .section {
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 22px;
+        font-weight: 600;
+        color: #2C2C2C;
+        margin: 0 0 8px 0;
+    }
+
+    .section-desc {
+        font-size: 14px;
+        color: #757575;
+        margin: 0 0 20px 0;
+    }
+
+    /* ==================== 数据源网格（两列布局） ==================== */
+    .datasource-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .datasource-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 20px 16px;
+        background: white;
+        border: 1px solid #E0E0E0;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .datasource-card:active {
+        background: #F5F5F5;
+        transform: scale(0.98);
+        border-color: #2D3E5F;
+    }
+
+    .datasource-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #F5F5F5;
+        flex-shrink: 0;
+    }
+
+    .favicon-img {
+        width: 32px;
+        height: 32px;
+        object-fit: contain;
+    }
+
+    .favicon-placeholder {
+        font-size: 24px;
+        font-weight: 600;
+        color: #2D3E5F;
+    }
+
+    .datasource-info {
+        text-align: center;
+    }
+
+    .datasource-name {
+        font-size: 15px;
+        font-weight: 600;
+        color: #2C2C2C;
+    }
+
+    /* ==================== 空状态 ==================== */
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 60px 24px;
+        text-align: center;
+    }
+
+    .empty-icon {
+        font-size: 64px;
+        opacity: 0.5;
+        margin-bottom: 16px;
+    }
+
+    .empty-text {
+        font-size: 16px;
+        color: #2C2C2C;
+        margin: 0 0 8px 0;
+    }
+
+    .empty-hint {
+        font-size: 14px;
+        color: #757575;
+        margin: 0;
+    }
+
+    /* ==================== 状态容器 ==================== */
+    .status-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 300px;
+    }
+
+    .syncing-wrapper,
+    .success-wrapper,
+    .error-wrapper {
         display: flex;
         flex-direction: column;
         align-items: center;
         text-align: center;
+        padding: 24px;
     }
 
-    .illustration {
-        margin-bottom: 24px;
+    .syncing-spinner {
+        font-size: 48px;
+        animation: spin 1s linear infinite;
+        margin-bottom: 16px;
     }
 
-    .icon-wrapper {
-        width: 120px;
-        height: 120px;
+    @@keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    .success-icon {
+        width: 64px;
+        height: 64px;
         border-radius: 50%;
-        background: linear-gradient(135deg, #FFF3E0 0%, #FFE0B2 100%);
+        background: #4CAF50;
+        color: white;
+        font-size: 36px;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin: 0 auto;
-        animation: float 3s ease-in-out infinite;
+        margin-bottom: 16px;
     }
 
-    @@keyframes float {
-        0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(-10px); }
+    .error-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
     }
 
-    .main-icon {
-        font-size: 56px;
-    }
-
-    .title {
-        font-size: 26px;
-        font-weight: 700;
-        color: #2D3E5F;
+    .status-title {
+        font-size: 20px;
+        font-weight: 600;
+        color: #2C2C2C;
         margin: 0 0 8px 0;
     }
 
-    .subtitle {
+    .status-desc {
         font-size: 15px;
         color: #757575;
-        margin: 0 0 32px 0;
+        margin: 0 0 16px 0;
     }
 
-    /* ==================== 功能列表 ==================== */
-    .feature-list {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        width: 100%;
-        margin-bottom: 24px;
-    }
-
-    .feature-item {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        padding: 16px;
-        background: white;
-        border-radius: 12px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        transition: transform 0.2s;
-    }
-
-    .feature-item:active {
-        transform: scale(0.98);
-    }
-
-    .feature-icon {
-        width: 48px;
-        height: 48px;
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 24px;
-        flex-shrink: 0;
-    }
-
-    .feature-icon.course {
-        background: #FFF3E0;
-    }
-
-    .feature-icon.activity {
-        background: #FCE4EC;
-    }
-
-    .feature-icon.privacy {
-        background: #E8F5E9;
-    }
-
-    .feature-info {
-        flex: 1;
-        text-align: left;
-    }
-
-    .feature-title {
-        display: block;
-        font-size: 16px;
-        font-weight: 600;
-        color: #2C2C2C;
-        margin-bottom: 2px;
-    }
-
-    .feature-desc {
-        display: block;
-        font-size: 13px;
-        color: #757575;
-    }
-
-    /* ==================== 信息卡片 ==================== */
-    .info-card {
-        display: flex;
-        gap: 12px;
-        padding: 16px;
-        background: #E3F2FD;
-        border-radius: 12px;
-        border-left: 4px solid #2196F3;
-        margin-bottom: 24px;
-        text-align: left;
-    }
-
-    .info-icon {
-        font-size: 24px;
-        flex-shrink: 0;
-    }
-
-    .info-content p {
-        font-size: 14px;
-        color: #1565C0;
-        margin: 0;
-        line-height: 1.6;
-    }
-
-    /* ==================== 返回按钮 ==================== */
-    .return-btn {
-        width: 100%;
-        padding: 16px 24px;
-        background: linear-gradient(135deg, #2D3E5F 0%, #1A2744 100%);
+    .retry-btn {
+        padding: 12px 24px;
+        background: #2D3E5F;
         color: white;
         border: none;
-        border-radius: 12px;
-        font-size: 16px;
-        font-weight: 600;
+        border-radius: 8px;
+        font-size: 15px;
         cursor: pointer;
-        transition: transform 0.2s;
-        box-shadow: 0 4px 12px rgba(45, 62, 95, 0.3);
-    }
-
-    .return-btn:active {
-        transform: scale(0.98);
     }
 
     /* ==================== Windows/桌面适配 ==================== */
     @@media (min-width: 768px) {
         .sync-page {
-            max-width: 480px;
+            max-width: 600px;
             margin: 0 auto;
         }
 
-        .feature-list {
-            max-width: 400px;
+        .datasource-grid {
+            grid-template-columns: repeat(3, 1fr);
         }
     }
 </style>
 
 @code {
-    private void NavigateToChat()
+    private SyncStep currentStep = SyncStep.SelectDataSource;
+    private List<DataSourceConfig> registeredSources = new();
+    private bool isSyncing = false;
+    private bool syncSuccess = false;
+    private string syncError = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        // 获取所有已注册的数据源
+        registeredSources = DataCaptureService.GetRegisteredSources();
+    }
+
+    private void SelectDataSource(string sourceId)
+    {
+        currentStep = SyncStep.Syncing;
+        isSyncing = true;
+        syncSuccess = false;
+        syncError = string.Empty;
+        StateHasChanged();
+
+        // 启动数据抓取
+        DataCaptureService.StartCapture(sourceId, (result) =>
+        {
+            isSyncing = false;
+
+            if (result.Success)
+            {
+                syncSuccess = true;
+                // TODO: 保存 JSON 数据到数据库
+                Debug.WriteLine($"[Sync] 获取到数据: {result.JsonData?.Length ?? 0} 字符");
+            }
+            else
+            {
+                syncError = result.Error ?? "未知错误";
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    private void NavigateBack()
     {
         Navigation.NavigateTo("/chat");
+    }
+
+    private void GoBack()
+    {
+        currentStep = SyncStep.SelectDataSource;
+        isSyncing = false;
+        syncSuccess = false;
+        syncError = string.Empty;
+        StateHasChanged();
+    }
+}
+
+@code {
+    enum SyncStep
+    {
+        SelectDataSource,
+        Syncing
     }
 }

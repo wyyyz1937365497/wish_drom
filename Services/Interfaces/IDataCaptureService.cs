@@ -1,36 +1,56 @@
-using wish_drom.Data.Entities;
-
 namespace wish_drom.Services.Interfaces
 {
+    /// <summary>
+    /// 数据捕获结果
+    /// </summary>
+    public class CaptureResult
+    {
+        /// <summary>
+        /// 是否成功
+        /// </summary>
+        public bool Success { get; set; }
+
+        /// <summary>
+        /// JSON 数据
+        /// </summary>
+        public string? JsonData { get; set; }
+
+        /// <summary>
+        /// 错误信息
+        /// </summary>
+        public string? Error { get; set; }
+    }
+
     /// <summary>
     /// WebView 数据抓取服务接口
     /// </summary>
     public interface IDataCaptureService
     {
         /// <summary>
-        /// 启动 WebView 进行课表数据抓取
+        /// 注册数据提供者
         /// </summary>
-        /// <param name="targetUrl">目标教务系统URL</param>
-        /// <param name="cancellationToken">取消令牌</param>
-        /// <returns>抓取到的课程数量</returns>
-        Task<int> CaptureScheduleDataAsync(string targetUrl, CancellationToken cancellationToken = default);
+        void RegisterProvider(string id, string displayName, string url, Models.IDataProvider provider, string? faviconUrl = null, string? toolDescription = null);
 
         /// <summary>
-        /// 启动 WebView 进行校园活动数据抓取
+        /// 获取所有已注册的数据源
         /// </summary>
-        /// <param name="targetUrl">目标活动页面URL</param>
-        /// <param name="cancellationToken">取消令牌</param>
-        /// <returns>抓取到的活动数量</returns>
-        Task<int> CaptureActivityDataAsync(string targetUrl, CancellationToken cancellationToken = default);
+        List<Models.DataSourceConfig> GetRegisteredSources();
 
         /// <summary>
-        /// 清除 WebView Cookie
+        /// 启动 WebView 数据抓取
         /// </summary>
-        Task ClearCookiesAsync();
+        /// <param name="sourceId">数据源 ID</param>
+        /// <param name="onResult">完成回调</param>
+        void StartCapture(string sourceId, Action<CaptureResult> onResult);
 
         /// <summary>
-        /// 数据抓取进度事件
+        /// 取消当前抓取
         /// </summary>
-        event EventHandler<string>? CaptureProgress;
+        void CancelCapture();
+
+        /// <summary>
+        /// 清除所有存储的数据（Cookie 等）
+        /// </summary>
+        Task ClearAllDataAsync();
     }
 }

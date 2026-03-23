@@ -1,102 +1,263 @@
 using Microsoft.Maui.Controls;
-using wish_drom.Data.Entities;
+using System.Diagnostics;
+using Microsoft.Maui.Graphics;
+using wish_drom.Models;
 using wish_drom.Services.Interfaces;
-using wish_drom.Services.HtmlParsers;
 
 namespace wish_drom.Services
 {
     /// <summary>
     /// WebView 数据抓取服务实现
+    /// App 只提供 WebView 和安全存储，数据提取逻辑由提供者实现
     /// </summary>
     public class DataCaptureService : IDataCaptureService
     {
-        private readonly IScheduleService _scheduleService;
-        private readonly IActivityService _activityService;
-        private readonly IScheduleParser _scheduleParser;
-        private string? _currentTargetUrl;
+        private readonly Dictionary<string, DataSourceConfig> _sources = new();
+        private Action<CaptureResult>? _onResult;
+        private WebView? _currentWebView;
+        private ContentPage? _webViewPage;
+        private CancellationTokenSource? _captureCts;
+        private readonly ISecureDataStorage _secureStorage;
 
-        public event EventHandler<string>? CaptureProgress;
-
-        public DataCaptureService(
-            IScheduleService scheduleService,
-            IActivityService activityService,
-            IScheduleParser scheduleParser)
+        public DataCaptureService()
         {
-            _scheduleService = scheduleService;
-            _activityService = activityService;
-            _scheduleParser = scheduleParser;
+            _secureStorage = new AppSecureDataStorage();
         }
 
-        public async Task<int> CaptureScheduleDataAsync(string targetUrl, CancellationToken cancellationToken = default)
+        public void RegisterProvider(string id, string displayName, string url, IDataProvider provider, string? faviconUrl = null, string? toolDescription = null)
         {
-            _currentTargetUrl = targetUrl;
-            CaptureProgress?.Invoke(this, "正在启动数据抓取...");
-
-            // 创建 WebView 页面
-            var capturedHtml = await ShowWebViewAndCaptureAsync(targetUrl, cancellationToken);
-            if (string.IsNullOrEmpty(capturedHtml))
+            _sources[id] = new DataSourceConfig
             {
-                CaptureProgress?.Invoke(this, "未能获取到页面数据");
-                return 0;
-            }
+                Id = id,
+                DisplayName = displayName,
+                Url = url,
+                Provider = provider,
+                FaviconUrl = faviconUrl,
+                ToolDescription = toolDescription ?? $"从 {displayName} 获取数据"
+            };
 
-            CaptureProgress?.Invoke(this, "正在解析数据...");
-
-            // 解析 HTML
-            var semester = GetCurrentSemester();
-            var schedules = _scheduleParser.ParseScheduleHtml(capturedHtml, semester);
-
-            if (schedules.Count == 0)
-            {
-                CaptureProgress?.Invoke(this, "未解析到课程数据，可能需要手动调整解析规则");
-                return 0;
-            }
-
-            // 保存到数据库
-            CaptureProgress?.Invoke(this, $"正在保存 {schedules.Count} 条课程数据...");
-            var savedCount = await _scheduleService.SaveSchedulesAsync(schedules, cancellationToken);
-
-            // 清除 Cookie
-            await ClearCookiesAsync();
-
-            CaptureProgress?.Invoke(this, $"数据同步完成，共保存 {savedCount} 条课程");
-            return savedCount;
+            Debug.WriteLine($"[DataCapture] 已注册数据源: {displayName} ({id})");
         }
 
-        public async Task<int> CaptureActivityDataAsync(string targetUrl, CancellationToken cancellationToken = default)
+        public List<DataSourceConfig> GetRegisteredSources()
         {
-            _currentTargetUrl = targetUrl;
-            CaptureProgress?.Invoke(this, "正在启动活动数据抓取...");
-
-            var capturedHtml = await ShowWebViewAndCaptureAsync(targetUrl, cancellationToken);
-            if (string.IsNullOrEmpty(capturedHtml))
-            {
-                CaptureProgress?.Invoke(this, "未能获取到页面数据");
-                return 0;
-            }
-
-            CaptureProgress?.Invoke(this, "正在解析活动数据...");
-
-            // 解析活动 (简化实现)
-            var activities = ParseActivityHtml(capturedHtml);
-
-            if (activities.Count == 0)
-            {
-                CaptureProgress?.Invoke(this, "未解析到活动数据");
-                return 0;
-            }
-
-            // 保存到数据库
-            CaptureProgress?.Invoke(this, $"正在保存 {activities.Count} 条活动数据...");
-            var savedCount = await _activityService.SaveActivitiesAsync(activities, cancellationToken);
-
-            await ClearCookiesAsync();
-
-            CaptureProgress?.Invoke(this, $"活动同步完成，共保存 {savedCount} 条");
-            return savedCount;
+            return _sources.Values.ToList();
         }
 
-        public async Task ClearCookiesAsync()
+        public void StartCapture(string sourceId, Action<CaptureResult> onResult)
+        {
+            if (!_sources.TryGetValue(sourceId, out var source))
+            {
+                onResult(new CaptureResult
+                {
+                    Success = false,
+                    Error = $"未找到数据源: {sourceId}"
+                });
+                return;
+            }
+
+            _onResult = onResult;
+            _captureCts = new CancellationTokenSource();
+
+            MainThread.BeginInvokeOnMainThread(async () =>
+            {
+                await RunWebViewCaptureAsync(source, _captureCts.Token);
+            });
+        }
+
+        private async Task RunWebViewCaptureAsync(DataSourceConfig source, CancellationToken cancellationToken)
+        {
+            var tcs = new TaskCompletionSource<CaptureResult>();
+
+            try
+            {
+                // 创建 WebView 页面
+                _webViewPage = new ContentPage
+                {
+                    Title = source.DisplayName,
+                    BackgroundColor = Colors.White
+                };
+
+                _currentWebView = new WebView
+                {
+                    Source = source.Url
+                };
+
+                var statusLabel = new Label
+                {
+                    Text = $"正在访问 {source.DisplayName}...",
+                    HorizontalTextAlignment = TextAlignment.Center,
+                    Margin = new Thickness(16, 8),
+                    FontSize = 14,
+                    TextColor = Colors.Gray
+                };
+
+                var extractButton = new Button
+                {
+                    Text = "提取数据",
+                    IsEnabled = false,
+                    Margin = new Thickness(16, 8),
+                    BackgroundColor = Color.FromArgb("#4CAF50"),
+                    TextColor = Colors.White,
+                    CornerRadius = 8
+                };
+
+                var cancelButton = new Button
+                {
+                    Text = "取消",
+                    Margin = new Thickness(16, 0, 16, 16),
+                    BackgroundColor = Colors.LightGray,
+                    TextColor = Colors.DarkGray,
+                    CornerRadius = 8
+                };
+
+                // 提取按钮点击
+                extractButton.Clicked += async (sender, e) =>
+                {
+                    extractButton.IsEnabled = false;
+                    cancelButton.IsEnabled = false;
+                    statusLabel.Text = "正在提取数据...";
+
+                    try
+                    {
+                        var html = await _currentWebView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
+                        var currentUrl = _currentWebView.Source?.ToString() ?? source.Url;
+
+                        if (string.IsNullOrEmpty(html))
+                        {
+                            tcs.SetResult(new CaptureResult
+                            {
+                                Success = false,
+                                Error = "无法获取页面内容"
+                            });
+                            return;
+                        }
+
+                        // 调用提供者的提取方法
+                        var jsonData = await source.Provider.ExtractDataAsync(html, _secureStorage);
+
+                        tcs.SetResult(new CaptureResult
+                        {
+                            Success = true,
+                            JsonData = jsonData
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.SetResult(new CaptureResult
+                        {
+                            Success = false,
+                            Error = ex.Message
+                        });
+                    }
+                };
+
+                cancelButton.Clicked += (sender, e) =>
+                {
+                    tcs.SetResult(new CaptureResult
+                    {
+                        Success = false,
+                        Error = "用户取消"
+                    });
+                };
+
+                // 监听导航事件
+                _currentWebView.Navigated += async (sender, e) =>
+                {
+                    Debug.WriteLine($"[DataCapture] 导航到: {e.Url}");
+
+                    try
+                    {
+                        var html = await _currentWebView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
+
+                        // 询问提供者是否可以提取数据
+                        if (source.Provider.IsReadyForExtraction(e.Url, html))
+                        {
+                            statusLabel.Text = "检测到数据页面，可以提取数据";
+                            extractButton.IsEnabled = true;
+                        }
+                        else
+                        {
+                            statusLabel.Text = "请登录或导航到数据页面...";
+                            extractButton.IsEnabled = false;
+                        }
+                    }
+                    catch
+                    {
+                        // 页面可能还在加载，忽略错误
+                    }
+                };
+
+                // 页面布局
+                _webViewPage.Content = new StackLayout
+                {
+                    VerticalOptions = LayoutOptions.FillAndExpand,
+                    Children =
+                    {
+                        statusLabel,
+                        new Frame
+                        {
+                            HeightRequest = DeviceDisplay.MainDisplayInfo.Height / 2,
+                            CornerRadius = 0,
+                            Padding = 0,
+                            Content = _currentWebView,
+                            HasShadow = false
+                        },
+                        extractButton,
+                        cancelButton
+                    }
+                };
+
+                // 显示页面
+                var mainPage = Application.Current?.MainPage;
+                if (mainPage != null)
+                {
+                    await mainPage.Navigation.PushAsync(_webViewPage);
+                }
+
+                // 等待结果
+                var result = await tcs.Task;
+
+                // 关闭 WebView
+                await CloseWebViewAsync();
+
+                // 回调结果
+                _onResult?.Invoke(result);
+            }
+            catch (Exception ex)
+            {
+                await CloseWebViewAsync();
+                _onResult?.Invoke(new CaptureResult
+                {
+                    Success = false,
+                    Error = ex.Message
+                });
+            }
+        }
+
+        private async Task CloseWebViewAsync()
+        {
+            try
+            {
+                var mainPage = Application.Current?.MainPage;
+                if (mainPage != null && _webViewPage != null && mainPage.Navigation.NavigationStack.Contains(_webViewPage))
+                {
+                    await mainPage.Navigation.PopAsync();
+                }
+            }
+            catch { }
+
+            _currentWebView = null;
+            _webViewPage = null;
+        }
+
+        public void CancelCapture()
+        {
+            _captureCts?.Cancel();
+            _currentWebView = null;
+        }
+
+        public async Task ClearAllDataAsync()
         {
 #if ANDROID
             var cookieManager = Android.Webkit.CookieManager.Instance;
@@ -110,164 +271,6 @@ namespace wish_drom.Services
             }
 #endif
             await Task.CompletedTask;
-        }
-
-        private async Task<string?> ShowWebViewAndCaptureAsync(string url, CancellationToken cancellationToken)
-        {
-            // 使用 TaskCompletionSource 等待 WebView 完成加载
-            var tcs = new TaskCompletionSource<string?>();
-
-            // 创建包含 WebView 的页面
-            var webViewPage = new ContentPage
-            {
-                Title = "数据同步",
-                Content = new WebView
-                {
-                    Source = url,
-                    HeightRequest = 800
-                }
-            };
-
-            var webView = (WebView)webViewPage.Content;
-
-            // 监听导航完成事件
-            webView.Navigated += async (sender, e) =>
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    tcs.SetCanceled(cancellationToken);
-                    return;
-                }
-
-                // 等待页面完全加载
-                await Task.Delay(2000, cancellationToken);
-
-                try
-                {
-                    // 获取页面 HTML
-                    var html = await webView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
-
-                    // 检查是否是目标页面 (可能需要根据具体系统调整)
-                    if (!string.IsNullOrEmpty(html) && html.Length > 1000)
-                    {
-                        tcs.SetResult(html);
-                    }
-                    else
-                    {
-                        // 如果页面内容不足，可能是在登录页，等待用户操作
-                        CaptureProgress?.Invoke(this, "请在WebView中登录，完成后点击返回");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    tcs.SetException(ex);
-                }
-            };
-
-            // 添加一个按钮用于手动完成抓取
-            var doneButton = new Button
-            {
-                Text = "完成抓取",
-                VerticalOptions = LayoutOptions.End
-            };
-            doneButton.Clicked += async (sender, e) =>
-            {
-                try
-                {
-                    var html = await webView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
-                    tcs.SetResult(html);
-                }
-                catch (Exception ex)
-                {
-                    tcs.SetException(ex);
-                }
-            };
-
-            webViewPage.Content = new StackLayout
-            {
-                Children =
-                {
-                    new Label { Text = "请在下方登录并导航到课表页面，完成后点击下方按钮", Margin = 10 },
-                    webView,
-                    doneButton
-                }
-            };
-
-            // 显示页面 (需要从主线程调用)
-            var mainPage = Application.Current?.MainPage;
-            if (mainPage != null)
-            {
-                await mainPage.Navigation.PushAsync(webViewPage);
-            }
-
-            // 等待结果
-            var result = await tcs.Task;
-
-            // 关闭页面
-            if (mainPage != null)
-            {
-                await mainPage.Navigation.PopAsync();
-            }
-
-            return result;
-        }
-
-        private List<CampusActivity> ParseActivityHtml(string html)
-        {
-            var activities = new List<CampusActivity>();
-
-            // 简化的活动解析逻辑
-            var doc = new HtmlAgilityPack.HtmlDocument();
-            doc.LoadHtml(html);
-
-            var activityNodes = doc.DocumentNode.SelectNodes("//div[@class='activity'] | //div[@class='event'] | //li[@class='notice']");
-            if (activityNodes != null)
-            {
-                foreach (var node in activityNodes)
-                {
-                    var title = node.SelectSingleNode(".//*[@class='title'] | .//h3 | .//h4")?.InnerText.Trim();
-                    var dateText = node.SelectSingleNode(".//*[@class='date'] | .//*[@class='time']")?.InnerText.Trim();
-                    var source = node.SelectSingleNode(".//*[@class='source'] | .//*[@class='org']")?.InnerText.Trim() ?? "未知来源";
-
-                    if (!string.IsNullOrWhiteSpace(title))
-                    {
-                        activities.Add(new CampusActivity
-                        {
-                            Title = title,
-                            Source = source,
-                            ActivityDate = ParseActivityDate(dateText),
-                            SyncTime = DateTime.Now
-                        });
-                    }
-                }
-            }
-
-            return activities;
-        }
-
-        private DateTime ParseActivityDate(string? dateText)
-        {
-            if (string.IsNullOrWhiteSpace(dateText))
-                return DateTime.Today;
-
-            // 尝试解析日期
-            if (DateTime.TryParse(dateText, out var date))
-                return date;
-
-            return DateTime.Today;
-        }
-
-        private string GetCurrentSemester()
-        {
-            var year = DateTime.Now.Year;
-            if (DateTime.Now.Month >= 9)
-            {
-                return $"{year}-{year + 1}第一学期";
-            }
-            else
-            {
-                return $"{year - 1}-{year}第二学期";
-            }
         }
     }
 }
