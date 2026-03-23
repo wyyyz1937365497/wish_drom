@@ -7,8 +7,9 @@ using wish_drom.Services.Interfaces;
 namespace wish_drom.Services
 {
     /// <summary>
-    /// WebView 数据抓取服务实现
-    /// App 只提供 WebView 和安全存储，数据提取逻辑由提供者实现
+    /// WebView 数据抓取服务实现 - 支持双阶段架构：
+    /// 阶段一：WebView 登录 + 凭证提取
+    /// 阶段二：原生 HTTP 数据获取（利用缓存凭证）
     /// </summary>
     public class DataCaptureService : IDataCaptureService
     {
@@ -61,6 +62,31 @@ namespace wish_drom.Services
 
             MainThread.BeginInvokeOnMainThread(async () =>
             {
+                // 尝试使用已缓存的凭证静默获取数据
+                try
+                {
+                    var cachedData = await source.Provider.FetchDataAsync(_secureStorage);
+                    if (!string.IsNullOrEmpty(cachedData))
+                    {
+                        Debug.WriteLine("[DataCapture] 使用缓存凭证静默获取数据成功");
+                        _onResult?.Invoke(new CaptureResult
+                        {
+                            Success = true,
+                            JsonData = cachedData
+                        });
+                        return;
+                    }
+                }
+                catch (AuthExpiredException)
+                {
+                    Debug.WriteLine("[DataCapture] 凭证已过期，进入登录流程");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[DataCapture] 静默获取失败: {ex.Message}，进入登录流程");
+                }
+
+                // 凭证不可用，走 WebView 登录流程
                 await RunWebViewCaptureAsync(source, _captureCts.Token);
             });
         }
@@ -71,7 +97,6 @@ namespace wish_drom.Services
 
             try
             {
-                // 创建 WebView 页面
                 _webViewPage = new ContentPage
                 {
                     Title = source.DisplayName,
@@ -111,7 +136,6 @@ namespace wish_drom.Services
                     CornerRadius = 8
                 };
 
-                // 提取按钮点击
                 extractButton.Clicked += async (sender, e) =>
                 {
                     extractButton.IsEnabled = false;
@@ -125,7 +149,7 @@ namespace wish_drom.Services
 
                         if (string.IsNullOrEmpty(html))
                         {
-                            tcs.SetResult(new CaptureResult
+                            tcs.TrySetResult(new CaptureResult
                             {
                                 Success = false,
                                 Error = "无法获取页面内容"
@@ -133,18 +157,58 @@ namespace wish_drom.Services
                             return;
                         }
 
-                        // 调用提供者的提取方法
-                        var jsonData = await source.Provider.ExtractDataAsync(html, _secureStorage);
+                        // 构建跨平台异步 JS 执行器委托
+                        Func<string, Task<string?>> jsExecutor = EvaluateAsyncJavaScriptAsync;
 
-                        tcs.SetResult(new CaptureResult
+                        // 阶段一：凭证提取（在 WebView 上下文中执行）
+                        statusLabel.Text = "正在提取凭证...";
+                        var extractResult = await source.Provider.ExtractDataAsync(html, _secureStorage, jsExecutor);
+
+                        if (extractResult == "CredentialsStored")
                         {
-                            Success = true,
-                            JsonData = jsonData
-                        });
+                            // 阶段二：使用提取的凭证获取业务数据
+                            statusLabel.Text = "正在获取课表数据...";
+                            var businessData = await source.Provider.FetchDataAsync(_secureStorage);
+
+                            if (!string.IsNullOrEmpty(businessData))
+                            {
+                                tcs.TrySetResult(new CaptureResult
+                                {
+                                    Success = true,
+                                    JsonData = businessData
+                                });
+                            }
+                            else
+                            {
+                                tcs.TrySetResult(new CaptureResult
+                                {
+                                    Success = false,
+                                    Error = "凭证已存储但获取数据失败"
+                                });
+                            }
+                        }
+                        else if (!string.IsNullOrEmpty(extractResult))
+                        {
+                            // Provider 直接返回了业务数据（传统 HTML 解析模式）
+                            tcs.TrySetResult(new CaptureResult
+                            {
+                                Success = true,
+                                JsonData = extractResult
+                            });
+                        }
+                        else
+                        {
+                            tcs.TrySetResult(new CaptureResult
+                            {
+                                Success = false,
+                                Error = "数据提取失败"
+                            });
+                        }
                     }
                     catch (Exception ex)
                     {
-                        tcs.SetResult(new CaptureResult
+                        Debug.WriteLine($"[DataCapture] 提取异常: {ex}");
+                        tcs.TrySetResult(new CaptureResult
                         {
                             Success = false,
                             Error = ex.Message
@@ -154,14 +218,13 @@ namespace wish_drom.Services
 
                 cancelButton.Clicked += (sender, e) =>
                 {
-                    tcs.SetResult(new CaptureResult
+                    tcs.TrySetResult(new CaptureResult
                     {
                         Success = false,
                         Error = "用户取消"
                     });
                 };
 
-                // 监听导航事件
                 _currentWebView.Navigated += async (sender, e) =>
                 {
                     Debug.WriteLine($"[DataCapture] 导航到: {e.Url}");
@@ -170,7 +233,6 @@ namespace wish_drom.Services
                     {
                         var html = await _currentWebView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
 
-                        // 询问提供者是否可以提取数据
                         if (source.Provider.IsReadyForExtraction(e.Url, html))
                         {
                             statusLabel.Text = "检测到数据页面，可以提取数据";
@@ -184,11 +246,10 @@ namespace wish_drom.Services
                     }
                     catch
                     {
-                        // 页面可能还在加载，忽略错误
+                        // 页面可能还在加载
                     }
                 };
 
-                // 页面布局
                 _webViewPage.Content = new StackLayout
                 {
                     VerticalOptions = LayoutOptions.FillAndExpand,
@@ -208,20 +269,16 @@ namespace wish_drom.Services
                     }
                 };
 
-                // 显示页面
                 var mainPage = Application.Current?.MainPage;
                 if (mainPage != null)
                 {
                     await mainPage.Navigation.PushAsync(_webViewPage);
                 }
 
-                // 等待结果
                 var result = await tcs.Task;
 
-                // 关闭 WebView
                 await CloseWebViewAsync();
 
-                // 回调结果
                 _onResult?.Invoke(result);
             }
             catch (Exception ex)
@@ -233,6 +290,54 @@ namespace wish_drom.Services
                     Error = ex.Message
                 });
             }
+        }
+
+        /// <summary>
+        /// 跨平台异步 JavaScript 执行器。
+        /// Android WebView 的 EvaluateJavaScriptAsync 不会自动 await Promise，
+        /// 因此使用全局变量 + 轮询模式确保跨平台一致行为。
+        /// </summary>
+        private async Task<string?> EvaluateAsyncJavaScriptAsync(string asyncExpression)
+        {
+            if (_currentWebView == null) return null;
+
+            var resultKey = $"__extractResult_{Guid.NewGuid():N}";
+
+            var wrappedScript = $@"
+                (async () => {{
+                    try {{
+                        const result = await ({asyncExpression});
+                        window['{resultKey}'] = typeof result === 'object'
+                            ? JSON.stringify(result)
+                            : String(result);
+                    }} catch(e) {{
+                        window['{resultKey}'] = JSON.stringify({{__error: e.message}});
+                    }}
+                }})();
+            ";
+
+            await _currentWebView.EvaluateJavaScriptAsync(wrappedScript);
+
+            for (int i = 0; i < 60; i++)
+            {
+                await Task.Delay(500);
+                var result = await _currentWebView.EvaluateJavaScriptAsync($"window['{resultKey}']");
+
+                if (result != null && result != "null" && result != "undefined")
+                {
+                    await _currentWebView.EvaluateJavaScriptAsync($"delete window['{resultKey}']");
+
+                    if (result.Contains("\"__error\""))
+                    {
+                        Debug.WriteLine($"[DataCapture] JS 执行错误: {result}");
+                        return null;
+                    }
+                    return result;
+                }
+            }
+
+            Debug.WriteLine($"[DataCapture] JS 执行超时: {asyncExpression[..Math.Min(100, asyncExpression.Length)]}");
+            return null;
         }
 
         private async Task CloseWebViewAsync()
@@ -270,7 +375,7 @@ namespace wish_drom.Services
                 storage.DeleteCookie(cookie);
             }
 #endif
-            await Task.CompletedTask;
+            await _secureStorage.ClearAsync();
         }
     }
 }

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using wish_drom.Data;
 using wish_drom.Services;
+using wish_drom.Services.DataProviders;
 using wish_drom.Services.Interfaces;
 
 namespace wish_drom
@@ -39,7 +40,21 @@ namespace wish_drom
             // 数据抓取服务
             builder.Services.AddSingleton<IDataCaptureService, DataCaptureService>();
 
-            return builder.Build();
+            var app = builder.Build();
+
+            // 注册数据源
+            var dataCaptureService = app.Services.GetRequiredService<IDataCaptureService>();
+
+            dataCaptureService.RegisterProvider(
+                id: "tongji-schedule",
+                displayName: "同济大学课表",
+                url: "https://1.tongji.edu.cn",
+                provider: new TongjiScheduleProvider(),
+                faviconUrl: "https://1.tongji.edu.cn/favicon.ico",
+                toolDescription: "查询同济大学课程表"
+            );
+
+            return app;
         }
     }
 }
