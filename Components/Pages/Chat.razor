@@ -1,206 +1,532 @@
 @page "/chat"
 @using wish_drom.Models
-@using wish_drom.Components.Shared
 @inject IChatService ChatService
 @inject NavigationManager Navigation
+@inject IJSRuntime JavaScriptRuntime
 
-<div class="chat-container">
-    <!-- 聊天消息区域 -->
-    <div class="messages-area" id="messagesContainer">
+<div class="chat-page">
+    @* 顶部应用栏 *@
+    <header class="chat-header">
+        <div class="header-content">
+            <div class="assistant-info">
+                <div class="avatar-large">🎓</div>
+                <div class="info-text">
+                    <h1 class="header-title">智能校园助手</h1>
+                    <p class="header-status">@(isConfigured ? "在线" : "未配置")</p>
+                </div>
+            </div>
+            @if (messages.Count > 0)
+            {
+                <button class="icon-btn" @onclick="ClearChat" title="清空聊天">
+                    <span>🗑️</span>
+                </button>
+            }
+        </div>
+    </header>
+
+    @* 消息列表区域 *@
+    <div class="messages-container" id="messagesContainer">
         @if (messages.Count == 0)
         {
-            <div class="welcome-message">
-                <h2>👋 欢迎使用智能校园助手</h2>
-                <p>我可以帮您:</p>
-                <ul>
-                    <li>📚 查询课程安排</li>
-                    <li>🎉 查看校园活动</li>
-                    <li>📅 管理学习计划</li>
-                </ul>
-                <p>请先在设置中配置 API Key，然后就可以开始聊天了！</p>
-                <button class="btn-primary" @onclick="NavigateToSettings">去设置</button>
-                <button class="btn-secondary" @onclick="NavigateToSync">同步数据</button>
+            <div class="empty-state">
+                <div class="empty-icon">💬</div>
+                <h2 class="empty-title">开始对话</h2>
+                <p class="empty-desc">我是你的智能校园助手，可以帮你：</p>
+
+                <div class="suggestion-chips">
+                    <button class="chip" @onclick="SendSuggestion">今天有什么课？</button>
+                    <button class="chip" @onclick="SendSuggestion">本周活动</button>
+                    <button class="chip" @onclick="SendSuggestion">学习建议</button>
+                </div>
+
+                @if (!isConfigured)
+                {
+                    <div class="config-card">
+                        <span class="config-icon">⚠️</span>
+                        <p class="config-text">请先配置 API Key</p>
+                        <button class="config-btn" @onclick="NavigateToSettings">去设置</button>
+                    </div>
+                }
             </div>
         }
         else
         {
-            @foreach (var message in messages)
-            {
-                <ChatMessage Role="@message.Role" Content="@message.Content" Timestamp="@message.Timestamp" />
-            }
-            @if (isStreaming)
-            {
-                <ChatMessage Role="assistant" Content="@streamingContent" IsStreaming="true" />
-            }
+            <div class="messages-list">
+                @foreach (var message in messages)
+                {
+                    <div class="message-wrapper @message.Role">
+                        @if (message.Role == "user")
+                        {
+                            <div class="message-bubble user-message">
+                                <p class="message-text">@message.Content</p>
+                                <span class="message-time">@message.Timestamp.ToString("HH:mm")</span>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="message-bubble assistant-message">
+                                <p class="message-text">@((MarkupString)FormatMarkdown(message.Content))</p>
+                                <span class="message-time">@message.Timestamp.ToString("HH:mm")</span>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (isStreaming)
+                {
+                    <div class="message-wrapper assistant">
+                        <div class="message-bubble assistant-message streaming">
+                            <p class="message-text">@streamingContent</p>
+                            <div class="typing-dots">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @* 底部垫高，为输入框留出空间 *@
+            <div class="messages-spacer"></div>
         }
     </div>
 
-    <!-- 输入区域 -->
-    <div class="input-area">
+    @* 输入区域 *@
+    <div class="input-container">
         @if (isConfigured)
         {
             <div class="input-wrapper">
                 <input type="text"
                        class="message-input"
-                       placeholder="输入你的问题..."
+                       placeholder="输入消息..."
                        @bind="inputText"
                        @bind:event="oninput"
                        @onkeypress="HandleKeyPress"
+                       @onfocus="InputFocused"
+                       @onblur="InputBlurred"
                        disabled="isStreaming">
-                <button class="send-button" @onclick="SendMessage" disabled="isStreaming || string.IsNullOrEmpty(inputText)">
-                    @if (isStreaming)
-                    {
-                        <span class="spinner">⏳</span>
-                    }
-                    else
-                    {
-                        <span>发送</span>
-                    }
+                <button class="send-btn" @onclick="SendMessage" disabled="isStreaming || string.IsNullOrEmpty(inputText)">
+                    <span class="send-icon">@(isStreaming ? "⏳" : "➤")</span>
                 </button>
             </div>
         }
         else
         {
-            <div class="config-prompt">
-                <span>⚠️ 请先配置 API Key</span>
-                <button class="btn-small" @onclick="NavigateToSettings">去设置</button>
-            </div>
+            <button class="setup-banner" @onclick="NavigateToSettings">
+                <span class="banner-icon">⚙️</span>
+                <span class="banner-text">点击配置 API Key</span>
+                <span class="banner-arrow">➤</span>
+            </button>
         }
     </div>
 </div>
 
 <style>
-    .chat-container {
+    /* ==================== 主容器 ==================== */
+    .chat-page {
         display: flex;
         flex-direction: column;
-        height: 100vh;
-        background-color: #f5f5f5;
+        height: 100%;
+        background-color: #F5F5F5;
     }
 
-    .messages-area {
+    /* ==================== 顶部应用栏 ==================== */
+    .chat-header {
+        background-color: #2D3E5F;
+        color: white;
+        padding: 12px 16px;
+        padding-top: max(12px, env(safe-area-inset-top));
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        z-index: 10;
+    }
+
+    .header-content {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .assistant-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .avatar-large {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #8B3A3A 0%, #6B2B2B 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .info-text {
+        flex: 1;
+    }
+
+    .header-title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+        line-height: 1.3;
+    }
+
+    .header-status {
+        font-size: 13px;
+        margin: 0;
+        opacity: 0.8;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .header-status::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: #4CAF50;
+        animation: pulse 2s infinite;
+    }
+
+    @@keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    .icon-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: none;
+        background: rgba(255,255,255,0.1);
+        color: white;
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+    }
+
+    .icon-btn:active {
+        background: rgba(255,255,255,0.2);
+    }
+
+    /* ==================== 消息区域 ==================== */
+    .messages-container {
         flex: 1;
         overflow-y: auto;
-        padding: 16px;
-        scroll-behavior: smooth;
+        -webkit-overflow-scrolling: touch;
     }
 
-    .welcome-message {
+    .messages-container::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .messages-container::-webkit-scrollbar-thumb {
+        background: rgba(0,0,0,0.2);
+        border-radius: 2px;
+    }
+
+    /* ==================== 空状态 ==================== */
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 40px 24px;
+        min-height: 100%;
         text-align: center;
-        padding: 40px 20px;
-        background: white;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        max-width: 400px;
-        margin: 40px auto;
     }
 
-    .welcome-message h2 {
-        color: #512BD4;
+    .empty-icon {
+        font-size: 64px;
         margin-bottom: 16px;
+        opacity: 0.6;
     }
 
-    .welcome-message ul {
-        text-align: left;
-        margin: 20px 0;
-        padding-left: 20px;
+    .empty-title {
+        font-size: 22px;
+        font-weight: 600;
+        color: #2D3E5F;
+        margin: 0 0 8px 0;
     }
 
-    .welcome-message li {
-        margin: 8px 0;
+    .empty-desc {
+        font-size: 15px;
+        color: #757575;
+        margin: 0 0 24px 0;
     }
 
-    .input-area {
-        padding: 12px 16px;
+    .suggestion-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+        margin-bottom: 24px;
+    }
+
+    .chip {
+        padding: 10px 16px;
         background: white;
-        border-top: 1px solid #e0e0e0;
+        border: 1px solid #E0E0E0;
+        border-radius: 20px;
+        font-size: 14px;
+        color: #2D3E5F;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .chip:active {
+        background: #F0F0F0;
+        transform: scale(0.98);
+    }
+
+    .config-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        background: #FFF3E0;
+        border-radius: 12px;
+        border: 1px solid #FFE0B2;
+    }
+
+    .config-icon {
+        font-size: 24px;
+    }
+
+    .config-text {
+        flex: 1;
+        font-size: 14px;
+        color: #E65100;
+        margin: 0;
+        text-align: left;
+    }
+
+    .config-btn {
+        padding: 8px 16px;
+        background: #FF9800;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+    }
+
+    /* ==================== 消息列表 ==================== */
+    .messages-list {
+        padding: 16px;
+    }
+
+    .messages-spacer {
+        height: 16px;
+    }
+
+    .message-wrapper {
+        display: flex;
+        margin-bottom: 16px;
+        animation: messageIn 0.3s ease-out;
+    }
+
+    .message-wrapper.user {
+        justify-content: flex-end;
+    }
+
+    @@keyframes messageIn {
+        from {
+            opacity: 0;
+            transform: translateY(8px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .message-bubble {
+        max-width: 75%;
+        padding: 12px 16px;
+        position: relative;
+    }
+
+    .user-message {
+        background: linear-gradient(135deg, #2D3E5F 0%, #1A2744 100%);
+        color: white;
+        border-radius: 20px 20px 4px 20px;
+    }
+
+    .assistant-message {
+        background: white;
+        color: #2C2C2C;
+        border-radius: 20px 20px 20px 4px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+
+    .assistant-message.streaming {
+        background: linear-gradient(to bottom, #FFFFFF 0%, #FAFAFA 100%);
+    }
+
+    .message-text {
+        font-size: 15px;
+        line-height: 1.5;
+        margin: 0 0 4px 0;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+    }
+
+    .message-text :deep(strong) {
+        font-weight: 600;
+    }
+
+    .message-text :deep(em) {
+        font-style: italic;
+        opacity: 0.8;
+    }
+
+    .message-time {
+        font-size: 11px;
+        opacity: 0.6;
+    }
+
+    /* ==================== 输入指示器 ==================== */
+    .typing-dots {
+        display: inline-flex;
+        gap: 4px;
+        margin-left: 8px;
+    }
+
+    .typing-dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #2D3E5F;
+        animation: bounce 1.4s infinite;
+    }
+
+    .typing-dots span:nth-child(2) {
+        animation-delay: 0.2s;
+    }
+
+    .typing-dots span:nth-child(3) {
+        animation-delay: 0.4s;
+    }
+
+    @@keyframes bounce {
+        0%, 60%, 100% { transform: translateY(0); }
+        30% { transform: translateY(-6px); }
+    }
+
+    /* ==================== 输入区域 ==================== */
+    .input-container {
+        background: white;
+        border-top: 1px solid #E0E0E0;
+        padding: 12px 16px;
+        padding-bottom: max(12px, env(safe-area-inset-bottom));
     }
 
     .input-wrapper {
         display: flex;
         gap: 8px;
-        max-width: 800px;
-        margin: 0 auto;
+        align-items: flex-end;
     }
 
     .message-input {
         flex: 1;
         padding: 12px 16px;
-        border: 1px solid #ddd;
+        background: #F5F5F5;
+        border: none;
         border-radius: 24px;
-        font-size: 15px;
+        font-size: 16px;
+        color: #2C2C2C;
         outline: none;
-        transition: border-color 0.2s;
+        max-height: 120px;
+        resize: none;
+    }
+
+    .message-input::placeholder {
+        color: #9E9E9E;
     }
 
     .message-input:focus {
-        border-color: #512BD4;
+        background: #EEEEEE;
     }
 
-    .send-button {
-        padding: 12px 24px;
-        background-color: #512BD4;
-        color: white;
+    .send-btn {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
         border: none;
-        border-radius: 24px;
+        background: linear-gradient(135deg, #8B3A3A 0%, #6B2B2B 100%);
+        color: white;
+        font-size: 20px;
         cursor: pointer;
-        font-weight: 500;
-        transition: background-color 0.2s;
-    }
-
-    .send-button:hover:not(:disabled) {
-        background-color: #4120a3;
-    }
-
-    .send-button:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-    }
-
-    .config-prompt {
         display: flex;
+        align-items: center;
         justify-content: center;
+        flex-shrink: 0;
+        transition: transform 0.2s;
+    }
+
+    .send-btn:active {
+        transform: scale(0.95);
+    }
+
+    .send-btn:disabled {
+        opacity: 0.5;
+    }
+
+    /* ==================== 设置横幅 ==================== */
+    .setup-banner {
+        width: 100%;
+        display: flex;
         align-items: center;
         gap: 12px;
-        padding: 12px;
-        background-color: #fff3cd;
-        border-radius: 8px;
-        max-width: 400px;
-        margin: 0 auto;
-    }
-
-    .btn-primary, .btn-secondary, .btn-small {
-        padding: 10px 20px;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
+        padding: 14px 20px;
+        background: linear-gradient(135deg, #FFF3E0 0%, #FFE0B2 100%);
+        border: 1px solid #FFB74D;
+        border-radius: 12px;
+        color: #E65100;
+        font-size: 15px;
         font-weight: 500;
-        margin: 4px;
+        cursor: pointer;
+        transition: transform 0.2s;
     }
 
-    .btn-primary {
-        background-color: #512BD4;
-        color: white;
+    .setup-banner:active {
+        transform: scale(0.98);
     }
 
-    .btn-secondary {
-        background-color: #6c757d;
-        color: white;
+    .banner-icon {
+        font-size: 20px;
     }
 
-    .btn-small {
-        padding: 6px 12px;
-        background-color: #512BD4;
-        color: white;
+    .banner-text {
+        flex: 1;
     }
 
-    .spinner {
-        animation: spin 1s linear infinite;
-        display: inline-block;
+    .banner-arrow {
+        font-size: 18px;
     }
 
-    @@keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
+    /* ==================== Windows/桌面适配 ==================== */
+    @@media (min-width: 768px) {
+        .chat-page {
+            max-width: 480px;
+            margin: 0 auto;
+            box-shadow: 0 0 40px rgba(0,0,0,0.1);
+        }
+
+        .message-bubble {
+            max-width: 65%;
+        }
     }
 </style>
 
@@ -229,7 +555,6 @@
         var userMessage = inputText.Trim();
         inputText = string.Empty;
 
-        // 添加用户消息
         messages.Add(new ChatMessage
         {
             Role = "user",
@@ -237,7 +562,6 @@
             Timestamp = DateTime.Now
         });
 
-        // 开始流式响应
         isStreaming = true;
         streamingContent = string.Empty;
         StateHasChanged();
@@ -250,13 +574,9 @@
             {
                 streamingContent += chunk;
                 responseBuilder.Append(chunk);
-
-                // 每100ms更新一次UI
-                await Task.Delay(100);
                 StateHasChanged();
             }
 
-            // 添加完整的助手消息
             messages.Add(new ChatMessage
             {
                 Role = "assistant",
@@ -279,17 +599,38 @@
             streamingContent = string.Empty;
             StateHasChanged();
 
-            // 滚动到底部
+            await Task.Delay(100);
             await JavaScriptRuntime.InvokeVoidAsync("scrollToBottom", "messagesContainer");
         }
     }
 
-    private void HandleKeyPress(KeyboardEventArgs e)
+    private async Task HandleKeyPress(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(inputText))
+        if (e.Key == "Enter")
         {
-            SendMessage();
+            await SendMessage();
         }
+    }
+
+    private void SendSuggestion()
+    {
+        // 预设建议消息
+    }
+
+    private void ClearChat()
+    {
+        messages.Clear();
+        currentSessionId = ChatService.StartNewSession();
+    }
+
+    private void InputFocused()
+    {
+        // 键盘弹出时的处理
+    }
+
+    private void InputBlurred()
+    {
+        // 键盘收起时的处理
     }
 
     private void NavigateToSettings()
@@ -297,8 +638,11 @@
         Navigation.NavigateTo("/settings");
     }
 
-    private void NavigateToSync()
+    private string FormatMarkdown(string content)
     {
-        Navigation.NavigateTo("/sync");
+        return content
+            .Replace("\n", "<br>")
+            .Replace("**", "<strong>")
+            .Replace("*", "<em>");
     }
 }

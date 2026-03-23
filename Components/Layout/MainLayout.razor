@@ -1,17 +1,174 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
+<div class="mobile-layout">
+    @* 顶部状态栏区域（安全区域） *@
+    <div class="status-bar-safe-area"></div>
+
+    @* 主内容区域 *@
+    <div class="layout-content">
+        @Body
     </div>
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
-        </div>
-
-        <article class="content px-4">
-            @Body
-        </article>
-    </main>
+    @* 底部导航栏 *@
+    @if (ShowBottomNav)
+    {
+        <nav class="bottom-nav">
+            <NavLink class="nav-item" href="chat" Match="NavLinkMatch.All">
+                <span class="nav-icon">💬</span>
+                <span class="nav-label">聊天</span>
+            </NavLink>
+            <NavLink class="nav-item" href="sync">
+                <span class="nav-icon">🔄</span>
+                <span class="nav-label">同步</span>
+            </NavLink>
+            <NavLink class="nav-item" href="settings">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-label">设置</span>
+            </NavLink>
+        </nav>
+    }
 </div>
+
+<style>
+    /* 移动优先布局 */
+    .mobile-layout {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        background-color: #F5F5F5;
+        overflow: hidden;
+    }
+
+    /* 状态栏安全区域 */
+    .status-bar-safe-area {
+        height: env(safe-area-inset-top, 0px);
+        background-color: #2D3E5F;
+        flex-shrink: 0;
+    }
+
+    /* 主内容区域 */
+    .layout-content {
+        flex: 1;
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* 底部导航栏 */
+    .bottom-nav {
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        height: calc(56px + env(safe-area-inset-bottom, 0px));
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        background-color: #FFFFFF;
+        border-top: 1px solid #E0E0E0;
+        box-shadow: 0 -2px 8px rgba(0,0,0,0.05);
+        flex-shrink: 0;
+        z-index: 100;
+    }
+
+    .nav-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 8px 16px;
+        color: #757575;
+        text-decoration: none;
+        min-width: 64px;
+        transition: all 0.2s ease;
+        position: relative;
+    }
+
+    .nav-item:active {
+        opacity: 0.7;
+    }
+
+    .nav-item.active {
+        color: #2D3E5F;
+    }
+
+    .nav-item.active::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 24px;
+        height: 3px;
+        background-color: #C9A959;
+        border-radius: 2px 2px 0 0;
+    }
+
+    .nav-icon {
+        font-size: 24px;
+        margin-bottom: 2px;
+    }
+
+    .nav-label {
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    /* Windows/桌面平台适配 */
+    @@media (min-width: 768px) {
+        .mobile-layout {
+            flex-direction: row;
+        }
+
+        .status-bar-safe-area {
+            display: none;
+        }
+
+        .layout-content {
+            height: 100vh;
+        }
+
+        .bottom-nav {
+            flex-direction: column;
+            width: 80px;
+            height: 100vh;
+            justify-content: flex-start;
+            padding-top: 16px;
+            padding-bottom: 0;
+            border-top: none;
+            border-right: 1px solid #E0E0E0;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.05);
+        }
+
+        .nav-item {
+            flex-direction: row;
+            justify-content: center;
+            padding: 16px 12px;
+            min-width: auto;
+            min-height: 64px;
+        }
+
+        .nav-item.active::after {
+            bottom: auto;
+            top: 0;
+            left: 0;
+            transform: none;
+            width: 4px;
+            height: 100%;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .nav-icon {
+            margin-bottom: 0;
+            margin-right: 0;
+            font-size: 28px;
+        }
+
+        .nav-label {
+            display: none;
+        }
+    }
+</style>
+
+@code {
+    [Parameter]
+    public RenderFragment ChildContent { get; set; } = default!;
+
+    private bool ShowBottomNav => true;
+}

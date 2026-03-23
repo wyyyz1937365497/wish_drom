@@ -1,9 +1,8 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using wish_drom.Data;
 using wish_drom.Services;
 using wish_drom.Services.Interfaces;
-using wish_drom.Services.HtmlParsers;
 
 namespace wish_drom
 {
@@ -34,18 +33,14 @@ namespace wish_drom
                 return dbContext;
             });
 
-            // HTML 解析器
-            builder.Services.AddSingleton<IScheduleParser, DefaultScheduleParser>();
-
-            // 数据服务
-            builder.Services.AddSingleton<IScheduleService, ScheduleService>();
-            builder.Services.AddSingleton<IActivityService, ActivityService>();
-
-            // 数据抓取服务
-            builder.Services.AddSingleton<IDataCaptureService, DataCaptureService>();
-
-            // 聊天服务 (延迟初始化，因为需要 API Key)
+            // 聊天服务
             builder.Services.AddSingleton<IChatService, ChatService>();
+
+            // TODO: 课表和活动服务将在后续实现
+            // builder.Services.AddSingleton<IScheduleService, ScheduleService>();
+            // builder.Services.AddSingleton<IActivityService, ActivityService>();
+            // builder.Services.AddSingleton<IDataCaptureService, DataCaptureService>();
+            // builder.Services.AddSingleton<IScheduleParser, DefaultScheduleParser>();
 
             return builder.Build();
         }

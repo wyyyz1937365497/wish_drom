@@ -1,342 +1,301 @@
 @page "/sync"
-@using wish_drom.Components.Shared
-@using wish_drom.Services.Interfaces
-@inject IDataCaptureService DataCaptureService
 @inject NavigationManager Navigation
 
-<div class="sync-container">
-    <h1>🔄 数据同步</h1>
-    <p class="subtitle">从教务系统同步课程和活动数据</p>
+<div class="sync-page">
+    @* 顶部应用栏 *@
+    <header class="app-bar">
+        <button class="back-btn" @onclick="NavigateToChat">
+            <span class="back-icon">←</span>
+        </button>
+        <h1 class="app-title">数据同步</h1>
+        <div class="app-bar-spacer"></div>
+    </header>
 
-    @if (!isSyncing)
-    {
-        <div class="sync-options">
-            <div class="sync-card">
-                <div class="card-icon">📚</div>
-                <h3>同步课程表</h3>
-                <p>从教务系统导入课程安排</p>
-                <button class="btn-primary" @onclick="StartScheduleSync">开始同步</button>
-            </div>
-
-            <div class="sync-card">
-                <div class="card-icon">🎉</div>
-                <h3>同步活动</h3>
-                <p>获取最新校园活动信息</p>
-                <button class="btn-secondary" @onclick="StartActivitySync">开始同步</button>
-            </div>
-        </div>
-
-        <div class="help-section">
-            <h2>使用说明</h2>
-            <ol>
-                <li>点击"开始同步"按钮</li>
-                <li>在弹出的 WebView 中登录教务系统</li>
-                <li>导航到课表/活动页面</li>
-                <li>点击"完成抓取"按钮</li>
-                <li>等待数据解析和保存完成</li>
-            </ol>
-
-            <div class="privacy-notice">
-                <h3>🔒 隐私保护</h3>
-                <ul>
-                    <li>所有数据仅存储在您的设备本地</li>
-                    <li>同步完成后自动清除登录 Cookie</li>
-                    <li>不会上传任何个人信息到远程服务器</li>
-                </ul>
-            </div>
-        </div>
-    }
-    else
-    {
-        <div class="syncing-state">
-            <LoadingSpinner Message="@syncProgress" />
-
-            @if (syncResults.Any())
-            {
-                <div class="sync-results">
-                    <h3>同步结果</h3>
-                    @foreach (var result in syncResults)
-                    {
-                        <div class="result-item @result.Type">
-                            <span class="result-icon">@result.Icon</span>
-                            <span class="result-text">@result.Message</span>
-                        </div>
-                    }
+    @* 内容区域 *@
+    <div class="sync-content">
+        @* 开发中状态 *@
+        <div class="coming-soon">
+            <div class="illustration">
+                <div class="icon-wrapper">
+                    <span class="main-icon">🚧</span>
                 </div>
-            }
+            </div>
 
-            <button class="btn-secondary" @onclick="BackToHome">返回首页</button>
+            <h2 class="title">功能开发中</h2>
+            <p class="subtitle">数据同步功能正在紧张开发中，敬请期待！</p>
+
+            @* 功能预览 *@
+            <div class="feature-list">
+                <div class="feature-item">
+                    <div class="feature-icon course">📚</div>
+                    <div class="feature-info">
+                        <span class="feature-title">课表同步</span>
+                        <span class="feature-desc">从教务系统一键导入课程</span>
+                    </div>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-icon activity">🎉</div>
+                    <div class="feature-info">
+                        <span class="feature-title">活动聚合</span>
+                        <span class="feature-desc">自动收集校园活动信息</span>
+                    </div>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-icon privacy">🔒</div>
+                    <div class="feature-info">
+                        <span class="feature-title">隐私保护</span>
+                        <span class="feature-desc">数据仅存储在设备本地</span>
+                    </div>
+                </div>
+            </div>
+
+            @* 说明卡片 *@
+            <div class="info-card">
+                <span class="info-icon">💡</span>
+                <div class="info-content">
+                    <p>完成后，您可以通过 WebView 登录教务系统，智能解析课表和活动数据。</p>
+                </div>
+            </div>
+
+            @* 返回按钮 *@
+            <button class="return-btn" @onclick="NavigateToChat">
+                <span>💬 返回聊天</span>
+            </button>
         </div>
-    }
+    </div>
 </div>
 
 <style>
-    .sync-container {
-        max-width: 600px;
-        margin: 0 auto;
-        padding: 20px;
-        background-color: #f5f5f5;
-        min-height: 100vh;
+    /* ==================== 主容器 ==================== */
+    .sync-page {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background-color: #F5F5F5;
     }
 
-    .sync-container h1 {
-        color: #512BD4;
-        text-align: center;
-        margin-bottom: 8px;
+    /* ==================== 应用栏 ==================== */
+    .app-bar {
+        display: flex;
+        align-items: center;
+        padding: 12px 16px;
+        padding-top: max(12px, env(safe-area-inset-top));
+        background-color: #2D3E5F;
+        color: white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        z-index: 10;
     }
 
-    .subtitle {
+    .back-btn {
+        width: 40px;
+        height: 40px;
+        border: none;
+        background: none;
+        color: white;
+        font-size: 24px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 8px;
+    }
+
+    .back-btn:active {
+        opacity: 0.7;
+    }
+
+    .app-title {
+        font-size: 20px;
+        font-weight: 600;
+        margin: 0;
+        flex: 1;
+    }
+
+    .app-bar-spacer {
+        width: 40px;
+    }
+
+    /* ==================== 内容区域 ==================== */
+    .sync-content {
+        flex: 1;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 24px 16px;
+    }
+
+    /* ==================== 开发中状态 ==================== */
+    .coming-soon {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
         text-align: center;
-        color: #666;
+    }
+
+    .illustration {
         margin-bottom: 24px;
     }
 
-    .sync-options {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-        gap: 16px;
-        margin-bottom: 32px;
+    .icon-wrapper {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #FFF3E0 0%, #FFE0B2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        animation: float 3s ease-in-out infinite;
     }
 
-    .sync-card {
+    @@keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+    }
+
+    .main-icon {
+        font-size: 56px;
+    }
+
+    .title {
+        font-size: 26px;
+        font-weight: 700;
+        color: #2D3E5F;
+        margin: 0 0 8px 0;
+    }
+
+    .subtitle {
+        font-size: 15px;
+        color: #757575;
+        margin: 0 0 32px 0;
+    }
+
+    /* ==================== 功能列表 ==================== */
+    .feature-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 100%;
+        margin-bottom: 24px;
+    }
+
+    .feature-item {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px;
         background: white;
-        padding: 24px;
         border-radius: 12px;
-        text-align: center;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         transition: transform 0.2s;
     }
 
-    .sync-card:hover {
-        transform: translateY(-2px);
+    .feature-item:active {
+        transform: scale(0.98);
     }
 
-    .card-icon {
-        font-size: 48px;
-        margin-bottom: 12px;
-    }
-
-    .sync-card h3 {
-        color: #333;
-        margin-bottom: 8px;
-    }
-
-    .sync-card p {
-        color: #666;
-        font-size: 14px;
-        margin-bottom: 16px;
-    }
-
-    .btn-primary, .btn-secondary {
-        padding: 12px 24px;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
-        font-weight: 500;
-        font-size: 14px;
-    }
-
-    .btn-primary {
-        background-color: #512BD4;
-        color: white;
-    }
-
-    .btn-secondary {
-        background-color: #6c757d;
-        color: white;
-    }
-
-    .help-section {
-        background: white;
-        padding: 20px;
+    .feature-icon {
+        width: 48px;
+        height: 48px;
         border-radius: 12px;
-        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        flex-shrink: 0;
     }
 
-    .help-section h2 {
-        font-size: 18px;
-        color: #333;
-        margin-bottom: 16px;
+    .feature-icon.course {
+        background: #FFF3E0;
     }
 
-    .help-section ol {
-        padding-left: 20px;
-        color: #555;
-        line-height: 1.8;
+    .feature-icon.activity {
+        background: #FCE4EC;
     }
 
-    .help-section li {
-        margin-bottom: 8px;
+    .feature-icon.privacy {
+        background: #E8F5E9;
     }
 
-    .privacy-notice {
-        background-color: #f8f9fa;
-        padding: 16px;
-        border-radius: 8px;
-        margin-top: 20px;
-    }
-
-    .privacy-notice h3 {
-        font-size: 16px;
-        color: #512BD4;
-        margin-bottom: 12px;
-    }
-
-    .privacy-notice ul {
-        padding-left: 20px;
-        color: #666;
-        font-size: 14px;
-    }
-
-    .syncing-state {
-        text-align: center;
-    }
-
-    .sync-results {
-        background: white;
-        padding: 16px;
-        border-radius: 12px;
-        margin: 20px auto;
-        max-width: 400px;
+    .feature-info {
+        flex: 1;
         text-align: left;
     }
 
-    .sync-results h3 {
+    .feature-title {
+        display: block;
         font-size: 16px;
-        color: #333;
-        margin-bottom: 12px;
+        font-weight: 600;
+        color: #2C2C2C;
+        margin-bottom: 2px;
     }
 
-    .result-item {
+    .feature-desc {
+        display: block;
+        font-size: 13px;
+        color: #757575;
+    }
+
+    /* ==================== 信息卡片 ==================== */
+    .info-card {
         display: flex;
-        align-items: center;
-        padding: 8px;
-        border-radius: 6px;
-        margin-bottom: 8px;
+        gap: 12px;
+        padding: 16px;
+        background: #E3F2FD;
+        border-radius: 12px;
+        border-left: 4px solid #2196F3;
+        margin-bottom: 24px;
+        text-align: left;
     }
 
-    .result-item.success {
-        background-color: #d4edda;
+    .info-icon {
+        font-size: 24px;
+        flex-shrink: 0;
     }
 
-    .result-item.error {
-        background-color: #f8d7da;
+    .info-content p {
+        font-size: 14px;
+        color: #1565C0;
+        margin: 0;
+        line-height: 1.6;
     }
 
-    .result-item.info {
-        background-color: #d1ecf1;
+    /* ==================== 返回按钮 ==================== */
+    .return-btn {
+        width: 100%;
+        padding: 16px 24px;
+        background: linear-gradient(135deg, #2D3E5F 0%, #1A2744 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s;
+        box-shadow: 0 4px 12px rgba(45, 62, 95, 0.3);
     }
 
-    .result-icon {
-        font-size: 20px;
-        margin-right: 12px;
+    .return-btn:active {
+        transform: scale(0.98);
     }
 
-    .result-text {
-        flex: 1;
-        color: #333;
+    /* ==================== Windows/桌面适配 ==================== */
+    @@media (min-width: 768px) {
+        .sync-page {
+            max-width: 480px;
+            margin: 0 auto;
+        }
+
+        .feature-list {
+            max-width: 400px;
+        }
     }
 </style>
 
 @code {
-    private bool isSyncing = false;
-    private string syncProgress = "准备中...";
-    private List<SyncResult> syncResults = new();
-
-    private class SyncResult
+    private void NavigateToChat()
     {
-        public string Type { get; set; } = "info"; // success, error, info
-        public string Icon { get; set; } = "ℹ️";
-        public string Message { get; set; } = string.Empty;
-    }
-
-    private async Task StartScheduleSync()
-    {
-        await StartSyncAsync(async ct =>
-        {
-            syncResults.Clear();
-            syncResults.Add(new SyncResult { Type = "info", Icon = "📚", Message = "开始同步课程表..." });
-
-            // 这里使用示例URL，实际使用时需要替换
-            var targetUrl = "https://your-educational-system-url/schedule";
-
-            DataCaptureService.CaptureProgress += OnCaptureProgress;
-
-            try
-            {
-                var count = await DataCaptureService.CaptureScheduleDataAsync(targetUrl, ct);
-                syncResults.Add(new SyncResult { Type = "success", Icon = "✅", Message = $"成功同步 {count} 条课程数据" });
-            }
-            catch (Exception ex)
-            {
-                syncResults.Add(new SyncResult { Type = "error", Icon = "❌", Message = $"同步失败: {ex.Message}" });
-            }
-            finally
-            {
-                DataCaptureService.CaptureProgress -= OnCaptureProgress;
-            }
-        });
-    }
-
-    private async Task StartActivitySync()
-    {
-        await StartSyncAsync(async ct =>
-        {
-            syncResults.Clear();
-            syncResults.Add(new SyncResult { Type = "info", Icon = "🎉", Message = "开始同步活动..." });
-
-            var targetUrl = "https://your-activity-url";
-
-            DataCaptureService.CaptureProgress += OnCaptureProgress;
-
-            try
-            {
-                var count = await DataCaptureService.CaptureActivityDataAsync(targetUrl, ct);
-                syncResults.Add(new SyncResult { Type = "success", Icon = "✅", Message = $"成功同步 {count} 条活动数据" });
-            }
-            catch (Exception ex)
-            {
-                syncResults.Add(new SyncResult { Type = "error", Icon = "❌", Message = $"同步失败: {ex.Message}" });
-            }
-            finally
-            {
-                DataCaptureService.CaptureProgress -= OnCaptureProgress;
-            }
-        });
-    }
-
-    private async Task StartSyncAsync(Func<CancellationToken, Task> syncAction)
-    {
-        isSyncing = true;
-        syncProgress = "正在启动...";
-        StateHasChanged();
-
-        try
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            await syncAction(cts.Token);
-            syncProgress = "同步完成";
-        }
-        catch (Exception ex)
-        {
-            syncProgress = $"发生错误: {ex.Message}";
-            syncResults.Add(new SyncResult { Type = "error", Icon = "❌", Message = ex.Message });
-        }
-        finally
-        {
-            isSyncing = false;
-            StateHasChanged();
-        }
-    }
-
-    private void OnCaptureProgress(object? sender, string message)
-    {
-        syncProgress = message;
-        InvokeAsync(StateHasChanged);
-    }
-
-    private void BackToHome()
-    {
-        Navigation.NavigateTo("/");
+        Navigation.NavigateTo("/chat");
     }
 }

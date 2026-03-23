@@ -100,7 +100,7 @@ namespace wish_drom.Services
         {
 #if ANDROID
             var cookieManager = Android.Webkit.CookieManager.Instance;
-            cookieManager.RemoveAllCookies();
+            cookieManager.RemoveAllCookies(null);
 #endif
 #if IOS
             Foundation.NSHttpCookieStorage storage = Foundation.NSHttpCookieStorage.SharedStorage;

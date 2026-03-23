@@ -39,11 +39,20 @@ namespace wish_drom.Services.Interfaces
         Task<bool> IsConfiguredAsync();
 
         /// <summary>
-        /// 配置 API Key
+        /// 配置 API 连接
         /// </summary>
+        /// <param name="baseUrl">API Base URL (如 https://api.openai.com)</param>
         /// <param name="apiKey">OpenAI API Key</param>
         /// <param name="modelId">模型ID (如 gpt-4o-mini)</param>
-        Task ConfigureAsync(string apiKey, string modelId = "gpt-4o-mini");
+        Task ConfigureAsync(string baseUrl, string apiKey, string modelId);
+
+        /// <summary>
+        /// 测试 API 连接
+        /// </summary>
+        /// <param name="baseUrl">API Base URL</param>
+        /// <param name="apiKey">API Key</param>
+        /// <param name="modelId">模型ID</param>
+        Task TestConnectionAsync(string baseUrl, string apiKey, string modelId);
 
         /// <summary>
         /// 清除当前会话上下文

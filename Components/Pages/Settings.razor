@@ -3,240 +3,673 @@
 @inject IChatService ChatService
 @inject NavigationManager Navigation
 
-<div class="settings-container">
-    <h1>⚙️ 设置</h1>
+<div class="settings-page">
+    @* 顶部应用栏 *@
+    <header class="app-bar">
+        <button class="back-btn" @onclick="NavigateBack">
+            <span class="back-icon">←</span>
+        </button>
+        <h1 class="app-title">设置</h1>
+        <div class="app-bar-spacer"></div>
+    </header>
 
-    <div class="settings-section">
-        <h2>AI 配置</h2>
-        <p class="section-desc">配置 OpenAI API Key 以启用智能助手功能</p>
+    @* 内容区域 *@
+    <div class="settings-content">
+        @* API 配置部分 *@
+        <section class="settings-section">
+            <h2 class="section-title">API 配置</h2>
 
-        <div class="form-group">
-            <label for="apiKey">API Key</label>
-            <input type="password"
-                   id="apiKey"
-                   class="form-control"
-                   placeholder="sk-..."
-                   @bind="apiKeyInput"
-                   @bind:event="oninput">
-            <small class="form-text">您的 API Key 将安全存储在设备本地</small>
-        </div>
+            <div class="setting-card">
+                @* BaseURL 配置 *@
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <span class="setting-icon">🌐</span>
+                        <div class="setting-text">
+                            <span class="setting-label">API 地址</span>
+                            <span class="setting-desc">OpenAI 兼容接口地址</span>
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="text"
+                               class="api-input wide"
+                               placeholder="https://api.openai.com"
+                               @bind="baseUrlInput"
+                               @bind:event="oninput">
+                    </div>
+                </div>
 
-        <div class="form-group">
-            <label for="modelId">模型 ID</label>
-            <select id="modelId" class="form-control" @bind="modelIdInput">
-                <option value="gpt-4o-mini">gpt-4o-mini (推荐)</option>
-                <option value="gpt-4o">gpt-4o</option>
-                <option value="gpt-4-turbo">gpt-4-turbo</option>
-                <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-            </select>
-        </div>
+                @* API Key 配置 *@
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <span class="setting-icon">🔑</span>
+                        <div class="setting-text">
+                            <span class="setting-label">API Key</span>
+                            <span class="setting-desc">密钥凭据</span>
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password"
+                               class="api-input wide"
+                               placeholder="sk-..."
+                               @bind="apiKeyInput"
+                               @bind:event="oninput">
+                    </div>
+                </div>
 
-        <div class="button-group">
-            <button class="btn-primary" @onclick="SaveSettings" disabled="isSaving">
-                @if (isSaving)
-                {
-                    <span>保存中...</span>
-                }
-                else
-                {
-                    <span>保存配置</span>
-                }
-            </button>
-            @if (isConfigured)
+                @* 模型选择 *@
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <span class="setting-icon">🤖</span>
+                        <div class="setting-text">
+                            <span class="setting-label">模型</span>
+                            <span class="setting-desc">AI 模型名称</span>
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="text"
+                               class="api-input wide"
+                               placeholder="gpt-4o-mini"
+                               @bind="modelIdInput"
+                               @bind:event="oninput">
+                    </div>
+                </div>
+            </div>
+
+            @* 快捷预设 *@
+            <div class="presets-section">
+                <h3 class="presets-title">快捷预设</h3>
+                <div class="presets-grid">
+                    <button class="preset-btn" @onclick="ApplyOpenAIPreset">
+                        <span class="preset-icon">🔵</span>
+                        <span class="preset-name">OpenAI</span>
+                    </button>
+                    <button class="preset-btn" @onclick="ApplyDeepSeekPreset">
+                        <span class="preset-icon">🔷</span>
+                        <span class="preset-name">DeepSeek</span>
+                    </button>
+                    <button class="preset-btn" @onclick="ApplyMoonshotPreset">
+                        <span class="preset-icon">🌙</span>
+                        <span class="preset-name">Moonshot</span>
+                    </button>
+                    <button class="preset-btn" @onclick="ApplyGroqPreset">
+                        <span class="preset-icon">⚡</span>
+                        <span class="preset-name">Groq</span>
+                    </button>
+                </div>
+            </div>
+
+            @if (saveMessage.HasValue)
             {
-                <button class="btn-danger" @onclick="ClearSettings">清除配置</button>
+                <div class="message-banner @(saveMessage.Value.Type)">
+                    <span class="banner-icon">@(saveMessage.Value.Type == "success" ? "✓" : "✕")</span>
+                    <span class="banner-text">@saveMessage.Value.Text</span>
+                    <button class="banner-close" @onclick="DismissMessage">✕</button>
+                </div>
             }
-        </div>
 
-        @if (saveMessage != null)
-        {
-            <div class="alert alert-@saveMessage.Type">@saveMessage.Text</div>
-        }
-    </div>
+            <div class="action-buttons">
+                <button class="action-btn secondary" @onclick="SaveSettings" disabled="isSaving">
+                    @if (isSaving)
+                    {
+                        <span class="btn-spinner">⟳</span>
+                        <span>保存配置</span>
+                    }
+                    else
+                    {
+                        <span>💾 保存配置</span>
+                    }
+                </button>
 
-    <div class="settings-section">
-        <h2>数据管理</h2>
-        <p class="section-desc">管理本地存储的数据</p>
+                <button class="action-btn primary" @onclick="TestConnection" disabled="isTesting || string.IsNullOrEmpty(apiKeyInput)">
+                    @if (isTesting)
+                    {
+                        <span class="btn-spinner">⟳</span>
+                        <span>测试中...</span>
+                    }
+                    else
+                    {
+                        <span>🧪 测试连接</span>
+                    }
+                </button>
 
-        <div class="info-card">
-            <div class="info-item">
-                <span class="info-label">📚 课程数量</span>
-                <span class="info-value">@courseCount 门</span>
+                @if (isConfigured)
+                {
+                    <button class="action-btn danger" @onclick="ClearSettings">
+                        <span>🗑️</span>
+                    </button>
+                }
             </div>
-            <div class="info-item">
-                <span class="info-label">🎉 活动数量</span>
-                <span class="info-value">@activityCount 条</span>
-            </div>
-            <div class="info-item">
-                <span class="info-label">💬 聊天记录</span>
-                <span class="info-value">@chatHistoryCount 条</span>
-            </div>
-        </div>
+        </section>
 
-        <div class="button-group">
-            <button class="btn-secondary" @onclick="NavigateToSync">同步数据</button>
-        </div>
-    </div>
+        @* 数据统计部分 *@
+        <section class="settings-section">
+            <h2 class="section-title">数据统计</h2>
 
-    <div class="settings-section">
-        <h2>关于</h2>
-        <p class="section-desc">智能校园助手 v1.0</p>
-        <p>基于 .NET MAUI + Blazor + Semantic Kernel 构建</p>
-        <p>所有数据均存储在本地，保护您的隐私</p>
+            <div class="stats-card">
+                <div class="stat-row">
+                    <div class="stat-item">
+                        <div class="stat-icon course">📚</div>
+                        <div class="stat-content">
+                            <span class="stat-value">@courseCount</span>
+                            <span class="stat-label">课程</span>
+                        </div>
+                    </div>
+                    <div class="stat-divider"></div>
+                    <div class="stat-item">
+                        <div class="stat-icon activity">🎉</div>
+                        <div class="stat-content">
+                            <span class="stat-value">@activityCount</span>
+                            <span class="stat-label">活动</span>
+                        </div>
+                    </div>
+                    <div class="stat-divider"></div>
+                    <div class="stat-item">
+                        <div class="stat-icon chat">💬</div>
+                        <div class="stat-content">
+                            <span class="stat-value">@chatHistoryCount</span>
+                            <span class="stat-label">对话</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        @* 关于部分 *@
+        <section class="settings-section">
+            <h2 class="section-title">关于</h2>
+
+            <div class="about-card">
+                <div class="about-header">
+                    <span class="about-icon">🎓</span>
+                    <div class="about-info">
+                        <h3 class="about-title">智能校园助手</h3>
+                        <span class="about-version">v1.0.0</span>
+                    </div>
+                </div>
+                <p class="about-desc">基于 .NET MAUI + Blazor + Semantic Kernel 构建</p>
+                <p class="about-desc">支持 OpenAI 兼容的第三方 API</p>
+                <div class="privacy-badge">
+                    <span class="privacy-icon">🔒</span>
+                    <span class="privacy-text">所有数据本地存储，保护您的隐私</span>
+                </div>
+            </div>
+        </section>
     </div>
 </div>
 
 <style>
-    .settings-container {
-        max-width: 600px;
-        margin: 0 auto;
-        padding: 20px;
-        background-color: #f5f5f5;
-        min-height: 100vh;
-    }
-
-    .settings-container h1 {
-        color: #512BD4;
-        margin-bottom: 24px;
-        text-align: center;
-    }
-
-    .settings-section {
-        background: white;
-        padding: 20px;
-        border-radius: 12px;
-        margin-bottom: 16px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-
-    .settings-section h2 {
-        font-size: 18px;
-        color: #333;
-        margin-bottom: 8px;
-    }
-
-    .section-desc {
-        color: #666;
-        font-size: 14px;
-        margin-bottom: 16px;
-    }
-
-    .form-group {
-        margin-bottom: 16px;
-    }
-
-    .form-group label {
-        display: block;
-        margin-bottom: 6px;
-        font-weight: 500;
-        color: #333;
-    }
-
-    .form-control {
-        width: 100%;
-        padding: 10px 12px;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        font-size: 14px;
-        box-sizing: border-box;
-    }
-
-    .form-control:focus {
-        outline: none;
-        border-color: #512BD4;
-    }
-
-    .form-text {
-        display: block;
-        margin-top: 4px;
-        font-size: 12px;
-        color: #888;
-    }
-
-    .button-group {
+    /* ==================== 主容器 ==================== */
+    .settings-page {
         display: flex;
-        gap: 8px;
-        margin-top: 16px;
+        flex-direction: column;
+        height: 100%;
+        background-color: #F5F5F5;
     }
 
-    .btn-primary, .btn-secondary, .btn-danger {
-        padding: 10px 20px;
+    /* ==================== 应用栏 ==================== */
+    .app-bar {
+        display: flex;
+        align-items: center;
+        padding: 12px 16px;
+        padding-top: max(12px, env(safe-area-inset-top));
+        background-color: #2D3E5F;
+        color: white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        z-index: 10;
+    }
+
+    .back-btn {
+        width: 40px;
+        height: 40px;
         border: none;
-        border-radius: 8px;
+        background: none;
+        color: white;
+        font-size: 24px;
         cursor: pointer;
-        font-weight: 500;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 8px;
+    }
+
+    .back-btn:active {
+        opacity: 0.7;
+    }
+
+    .app-title {
+        font-size: 20px;
+        font-weight: 600;
+        margin: 0;
         flex: 1;
     }
 
-    .btn-primary {
-        background-color: #512BD4;
-        color: white;
+    .app-bar-spacer {
+        width: 40px;
     }
 
-    .btn-secondary {
-        background-color: #6c757d;
-        color: white;
-    }
-
-    .btn-danger {
-        background-color: #dc3545;
-        color: white;
-    }
-
-    .btn-primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-    }
-
-    .alert {
-        padding: 12px;
-        border-radius: 8px;
-        margin-top: 12px;
-        font-size: 14px;
-    }
-
-    .alert-success {
-        background-color: #d4edda;
-        color: #155724;
-    }
-
-    .alert-error {
-        background-color: #f8d7da;
-        color: #721c24;
-    }
-
-    .info-card {
-        background-color: #f8f9fa;
+    /* ==================== 内容区域 ==================== */
+    .settings-content {
+        flex: 1;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
         padding: 16px;
-        border-radius: 8px;
-        margin-bottom: 16px;
     }
 
-    .info-item {
+    /* ==================== 设置区块 ==================== */
+    .settings-section {
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #757575;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: 0 0 12px 0;
+        padding: 0 4px;
+    }
+
+    /* ==================== 设置卡片 ==================== */
+    .setting-card {
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .setting-item {
         display: flex;
-        justify-content: space-between;
-        padding: 8px 0;
-        border-bottom: 1px solid #e9ecef;
+        align-items: center;
+        padding: 16px;
+        gap: 12px;
+        border-bottom: 1px solid #F5F5F5;
     }
 
-    .info-item:last-child {
+    .setting-item:last-child {
         border-bottom: none;
     }
 
-    .info-label {
-        color: #666;
+    .setting-info {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
     }
 
-    .info-value {
+    .setting-icon {
+        font-size: 22px;
+        flex-shrink: 0;
+    }
+
+    .setting-text {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .setting-label {
+        display: block;
+        font-size: 15px;
         font-weight: 500;
-        color: #512BD4;
+        color: #2C2C2C;
+    }
+
+    .setting-desc {
+        display: block;
+        font-size: 12px;
+        color: #757575;
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* ==================== 输入控件 ==================== */
+    .setting-control {
+        flex-shrink: 0;
+    }
+
+    .api-input {
+        padding: 10px 14px;
+        background: #F5F5F5;
+        border: 1px solid #E0E0E0;
+        border-radius: 8px;
+        font-size: 14px;
+        color: #2C2C2C;
+        outline: none;
+        transition: all 0.2s;
+        text-align: right;
+    }
+
+    .api-input:focus {
+        background: white;
+        border-color: #2D3E5F;
+    }
+
+    .api-input.wide {
+        width: 160px;
+    }
+
+    /* ==================== 预设按钮 ==================== */
+    .presets-section {
+        margin-top: 12px;
+    }
+
+    .presets-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #757575;
+        margin: 0 0 12px 4px;
+    }
+
+    .presets-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+
+    .preset-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 12px;
+        background: white;
+        border: 1px solid #E0E0E0;
+        border-radius: 12px;
+        font-size: 13px;
+        color: #2C2C2C;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .preset-btn:active {
+        background: #F5F5F5;
+        transform: scale(0.98);
+    }
+
+    .preset-icon {
+        font-size: 24px;
+    }
+
+    .preset-name {
+        font-weight: 500;
+    }
+
+    /* ==================== 消息横幅 ==================== */
+    .message-banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        border-radius: 12px;
+        margin-top: 12px;
+        animation: slideDown 0.3s ease-out;
+        position: relative;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .message-banner.success {
+        background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%);
+        color: #2E7D32;
+        border-left: 4px solid #4CAF50;
+    }
+
+    .message-banner.error {
+        background: linear-gradient(135deg, #FFEBEE 0%, #FFCDD2 100%);
+        color: #C62828;
+        border-left: 4px solid #F44336;
+    }
+
+    .banner-icon {
+        font-size: 24px;
+        font-weight: bold;
+    }
+
+    .banner-text {
+        flex: 1;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .banner-close {
+        width: 32px;
+        height: 32px;
+        border: none;
+        background: rgba(0,0,0,0.05);
+        border-radius: 50%;
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.5;
+        transition: opacity 0.2s;
+        flex-shrink: 0;
+    }
+
+    .banner-close:hover {
+        opacity: 1;
+    }
+
+    @@keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-8px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* ==================== 操作按钮 ==================== */
+    .action-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .action-btn {
+        flex: 1;
+        min-width: calc(50% - 4px);
+        padding: 14px 16px;
+        border: none;
+        border-radius: 12px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+
+    .action-btn:active {
+        transform: scale(0.98);
+    }
+
+    .action-btn.primary {
+        background: linear-gradient(135deg, #2D3E5F 0%, #1A2744 100%);
+        color: white;
+    }
+
+    .action-btn.primary:disabled {
+        opacity: 0.5;
+    }
+
+    .action-btn.secondary {
+        background: #4CAF50;
+        color: white;
+    }
+
+    .action-btn.secondary:disabled {
+        opacity: 0.5;
+    }
+
+    .action-btn.danger {
+        background: white;
+        color: #8B3A3A;
+        border: 1px solid #E0E0E0;
+        padding: 14px;
+    }
+
+    /* ==================== 统计卡片 ==================== */
+    .stats-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .stat-row {
+        display: flex;
+        align-items: center;
+    }
+
+    .stat-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .stat-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+    }
+
+    .stat-icon.course {
+        background: #FFF3E0;
+    }
+
+    .stat-icon.activity {
+        background: #FCE4EC;
+    }
+
+    .stat-icon.chat {
+        background: #E3F2FD;
+    }
+
+    .stat-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: #2D3E5F;
+    }
+
+    .stat-label {
+        font-size: 13px;
+        color: #757575;
+    }
+
+    .stat-divider {
+        width: 1px;
+        height: 40px;
+        background: #E0E0E0;
+    }
+
+    /* ==================== 关于卡片 ==================== */
+    .about-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .about-header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+
+    .about-icon {
+        font-size: 48px;
+    }
+
+    .about-info {
+        flex: 1;
+    }
+
+    .about-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #2C2C2C;
+        margin: 0 0 4px 0;
+    }
+
+    .about-version {
+        font-size: 13px;
+        color: #757575;
+    }
+
+    .about-desc {
+        font-size: 14px;
+        color: #757575;
+        margin: 0 0 8px 0;
+    }
+
+    .privacy-badge {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px;
+        background: #F5F5F5;
+        border-radius: 8px;
+    }
+
+    .privacy-icon {
+        font-size: 18px;
+    }
+
+    .privacy-text {
+        font-size: 13px;
+        color: #2C2C2C;
+    }
+
+    /* ==================== 加载动画 ==================== */
+    .btn-spinner {
+        display: inline-block;
+        animation: spin 1s linear infinite;
+    }
+
+    @@keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    /* ==================== Windows/桌面适配 ==================== */
+    @@media (min-width: 768px) {
+        .settings-page {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .api-input.wide {
+            width: 200px;
+        }
+
+        .presets-grid {
+            grid-template-columns: repeat(4, 1fr);
+        }
+
+        .action-btn {
+            min-width: auto;
+        }
     }
 </style>
 
 @code {
     private string apiKeyInput = string.Empty;
+    private string baseUrlInput = "https://api.openai.com";
     private string modelIdInput = "gpt-4o-mini";
     private bool isSaving = false;
+    private bool isTesting = false;
     private bool isConfigured = false;
     private (string Type, string Text)? saveMessage;
     private int courseCount = 0;
@@ -250,9 +683,11 @@
         if (isConfigured)
         {
             var existingKey = await SecureStorage.Default.GetAsync("openai_api_key");
+            var existingUrl = await SecureStorage.Default.GetAsync("openai_base_url");
             var existingModel = await SecureStorage.Default.GetAsync("openai_model_id");
 
             apiKeyInput = existingKey ?? string.Empty;
+            baseUrlInput = existingUrl ?? "https://api.openai.com";
             modelIdInput = existingModel ?? "gpt-4o-mini";
         }
 
@@ -261,9 +696,74 @@
 
     private async Task LoadDataStats()
     {
-        // TODO: 从数据库加载数据统计
-        // 这里暂时使用模拟数据
         await Task.CompletedTask;
+    }
+
+    // 预设配置
+    private void ApplyOpenAIPreset()
+    {
+        baseUrlInput = "https://api.openai.com";
+        modelIdInput = "gpt-4o-mini";
+        StateHasChanged();
+    }
+
+    private void ApplyDeepSeekPreset()
+    {
+        baseUrlInput = "https://api.deepseek.com";
+        modelIdInput = "deepseek-chat";
+        StateHasChanged();
+    }
+
+    private void ApplyMoonshotPreset()
+    {
+        baseUrlInput = "https://api.moonshot.cn";
+        modelIdInput = "moonshot-v1-8k";
+        StateHasChanged();
+    }
+
+    private void ApplyGroqPreset()
+    {
+        baseUrlInput = "https://api.groq.com/openai/v1";
+        modelIdInput = "llama-3.3-70b-versatile";
+        StateHasChanged();
+    }
+
+    private async Task TestConnection()
+    {
+        if (string.IsNullOrWhiteSpace(apiKeyInput))
+        {
+            saveMessage = ("error", "请先输入 API Key");
+            return;
+        }
+
+        isTesting = true;
+        StateHasChanged();
+
+        try
+        {
+            await ChatService.TestConnectionAsync(baseUrlInput, apiKeyInput, modelIdInput);
+            saveMessage = ("success", "✅ 连接测试成功！API 配置正确");
+        }
+        catch (Exception ex)
+        {
+            saveMessage = ("error", $"❌ 连接失败: {ex.Message}");
+        }
+        finally
+        {
+            isTesting = false;
+            StateHasChanged();
+
+            // 3秒后自动清除消息
+            if (saveMessage.HasValue)
+            {
+                await Task.Delay(3000);
+                if (saveMessage.Value.Type == "success")
+                {
+                    saveMessage = null;
+                    StateHasChanged();
+                }
+            }
+        }
     }
 
     private async Task SaveSettings()
@@ -279,13 +779,18 @@
 
         try
         {
-            await ChatService.ConfigureAsync(apiKeyInput, modelIdInput);
+            await ChatService.ConfigureAsync(baseUrlInput, apiKeyInput, modelIdInput);
             isConfigured = true;
-            saveMessage = ("success", "配置已保存");
+            saveMessage = ("success", "✅ 配置已保存！现在可以使用聊天功能了");
+
+            // 成功消息3秒后自动清除
+            await Task.Delay(3000);
+            saveMessage = null;
+            StateHasChanged();
         }
         catch (Exception ex)
         {
-            saveMessage = ("error", $"保存失败: {ex.Message}");
+            saveMessage = ("error", $"❌ 保存失败: {ex.Message}");
         }
         finally
         {
@@ -297,15 +802,25 @@
     private async Task ClearSettings()
     {
         SecureStorage.Default.Remove("openai_api_key");
+        SecureStorage.Default.Remove("openai_base_url");
         SecureStorage.Default.Remove("openai_model_id");
         apiKeyInput = string.Empty;
+        baseUrlInput = "https://api.openai.com";
+        modelIdInput = "gpt-4o-mini";
         isConfigured = false;
         saveMessage = ("success", "配置已清除");
         StateHasChanged();
+        await Task.CompletedTask;
     }
 
-    private void NavigateToSync()
+    private void NavigateBack()
     {
-        Navigation.NavigateTo("/sync");
+        Navigation.NavigateTo("/chat");
+    }
+
+    private void DismissMessage()
+    {
+        saveMessage = null;
+        StateHasChanged();
     }
 }
