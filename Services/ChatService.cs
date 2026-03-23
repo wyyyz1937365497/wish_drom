@@ -7,6 +7,7 @@ using wish_drom.Data.Entities;
 using wish_drom.Services.Interfaces;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
+using System.Diagnostics;
 
 namespace wish_drom.Services
 {
@@ -54,10 +55,13 @@ namespace wish_drom.Services
             // 简单测试：创建 Kernel 并发送一个测试请求
             var builder = Kernel.CreateBuilder();
 
+            var normalizedUrl = NormalizeBaseUrl(baseUrl);
+            Debug.WriteLine($"[ChatService] 测试连接 BaseAddress: {normalizedUrl}");
+
             // 使用 HttpClient 设置自定义端点
             var httpClient = new HttpClient
             {
-                BaseAddress = new Uri(NormalizeBaseUrl(baseUrl))
+                BaseAddress = new Uri(normalizedUrl)
             };
 
             builder.AddOpenAIChatCompletion(
@@ -86,10 +90,13 @@ namespace wish_drom.Services
 
             var builder = Kernel.CreateBuilder();
 
+            var normalizedUrl = NormalizeBaseUrl(_baseUrl);
+            Debug.WriteLine($"[ChatService] 初始化 BaseAddress: {normalizedUrl}");
+
             // 使用 HttpClient 设置自定义端点
             var httpClient = new HttpClient
             {
-                BaseAddress = new Uri(NormalizeBaseUrl(_baseUrl))
+                BaseAddress = new Uri(normalizedUrl)
             };
 
             builder.AddOpenAIChatCompletion(
@@ -107,17 +114,21 @@ namespace wish_drom.Services
             // 移除末尾的斜杠
             baseUrl = baseUrl.TrimEnd('/');
 
-            // 确保有 /v1 后缀（如果没有且看起来像 OpenAI 兼容端点）
-            if (!baseUrl.EndsWith("/v1") && !baseUrl.Contains("/chat/completions"))
+            // 检查是否已经包含版本号路径（如 /v1, /v2, /v3, /v4 等）
+            // 或者已经包含完整的 API 路径（如 /api/paas/v4）
+            var hasVersionPath = System.Text.RegularExpressions.Regex.IsMatch(baseUrl, @"/v\d+(/|$)");
+
+            if (hasVersionPath)
             {
-                // 检查是否已经包含了路径
-                if (!baseUrl.EndsWith("/openai/v1") && !baseUrl.Contains("/v1/"))
-                {
-                    baseUrl += "/v1";
-                }
+                // 已经包含版本号，直接使用
+                Debug.WriteLine($"[ChatService] URL 已包含版本路径: {baseUrl}");
+                return baseUrl;
             }
 
-            return baseUrl;
+            // 没有版本号，添加默认的 /v1
+            var result = baseUrl + "/v1";
+            Debug.WriteLine($"[ChatService] URL 添加 /v1: {baseUrl} -> {result}");
+            return result;
         }
 
         private string GetSystemPrompt()

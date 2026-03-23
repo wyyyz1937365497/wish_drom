@@ -6,7 +6,7 @@
 <div class="settings-page">
     @* 顶部应用栏 *@
     <header class="app-bar">
-        <button class="back-btn" @onclick="NavigateBack">
+        <button class="back-btn" @onclick="@(() => NavigateBack())">
             <span class="back-icon">←</span>
         </button>
         <h1 class="app-title">设置</h1>
@@ -65,12 +65,27 @@
                             <span class="setting-desc">AI 模型名称</span>
                         </div>
                     </div>
-                    <div class="setting-control">
+                    <div class="setting-control model-input-wrapper">
                         <input type="text"
                                class="api-input wide"
                                placeholder="gpt-4o-mini"
                                @bind="modelIdInput"
-                               @bind:event="oninput">
+                               @bind:event="oninput"
+                               @onfocus="@(() => FetchModelsAsync())">
+
+                        @* 悬浮模型列表 *@
+                        @if (availableModels.Count > 0)
+                        {
+                            <div class="models-dropdown">
+                                @foreach (var model in availableModels)
+                                {
+                                    <button class="model-dropdown-item @((modelIdInput == model) ? "selected" : "")"
+                                            @onclick="@(() => SelectModel(model))">
+                                        <span class="model-name">@model</span>
+                                    </button>
+                                }
+                            </div>
+                        }
                     </div>
                 </div>
             </div>
@@ -79,21 +94,21 @@
             <div class="presets-section">
                 <h3 class="presets-title">快捷预设</h3>
                 <div class="presets-grid">
-                    <button class="preset-btn" @onclick="ApplyOpenAIPreset">
+                    <button class="preset-btn" @onclick="@(() => ApplyOpenAIPreset())">
                         <span class="preset-icon">🔵</span>
                         <span class="preset-name">OpenAI</span>
                     </button>
-                    <button class="preset-btn" @onclick="ApplyDeepSeekPreset">
+                    <button class="preset-btn" @onclick="@(() => ApplyDeepSeekPreset())">
                         <span class="preset-icon">🔷</span>
                         <span class="preset-name">DeepSeek</span>
                     </button>
-                    <button class="preset-btn" @onclick="ApplyMoonshotPreset">
-                        <span class="preset-icon">🌙</span>
-                        <span class="preset-name">Moonshot</span>
+                    <button class="preset-btn" @onclick="@(() => ApplyBigModelPreset())">
+                        <span class="preset-icon">🧠</span>
+                        <span class="preset-name">智谱AI</span>
                     </button>
-                    <button class="preset-btn" @onclick="ApplyGroqPreset">
-                        <span class="preset-icon">⚡</span>
-                        <span class="preset-name">Groq</span>
+                    <button class="preset-btn" @onclick="@(() => ApplyQwenPreset())">
+                        <span class="preset-icon">🟠</span>
+                        <span class="preset-name">通义千问</span>
                     </button>
                 </div>
             </div>
@@ -103,12 +118,12 @@
                 <div class="message-banner @(saveMessage.Value.Type)">
                     <span class="banner-icon">@(saveMessage.Value.Type == "success" ? "✓" : "✕")</span>
                     <span class="banner-text">@saveMessage.Value.Text</span>
-                    <button class="banner-close" @onclick="DismissMessage">✕</button>
+                    <button class="banner-close" @onclick="@(() => DismissMessage())">✕</button>
                 </div>
             }
 
             <div class="action-buttons">
-                <button class="action-btn secondary" @onclick="SaveSettings" disabled="isSaving">
+                <button class="action-btn secondary" @onclick="@(() => SaveSettings())" @disabled="isSaving">
                     @if (isSaving)
                     {
                         <span class="btn-spinner">⟳</span>
@@ -120,7 +135,7 @@
                     }
                 </button>
 
-                <button class="action-btn primary" @onclick="TestConnection" disabled="isTesting || string.IsNullOrEmpty(apiKeyInput)">
+                <button class="action-btn primary" @onclick="@(() => TestConnection())" @disabled="(isTesting || string.IsNullOrEmpty(apiKeyInput))">
                     @if (isTesting)
                     {
                         <span class="btn-spinner">⟳</span>
@@ -134,7 +149,7 @@
 
                 @if (isConfigured)
                 {
-                    <button class="action-btn danger" @onclick="ClearSettings">
+                    <button class="action-btn danger" @onclick="@(() => ClearSettings())">
                         <span>🗑️</span>
                     </button>
                 }
@@ -274,8 +289,8 @@
     .setting-card {
         background: white;
         border-radius: 12px;
-        overflow: hidden;
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        overflow: visible;
     }
 
     .setting-item {
@@ -395,6 +410,67 @@
 
     .preset-name {
         font-weight: 500;
+    }
+
+    /* ==================== 模型下拉列表 ==================== */
+    .model-input-wrapper {
+        position: relative;
+    }
+
+    .models-dropdown {
+        position: absolute;
+        top: calc(100% + 4px);
+        right: 0;
+        width: 280px;
+        max-height: 250px;
+        overflow-y: auto;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+        z-index: 100;
+        animation: dropdownFade 0.2s ease-out;
+    }
+
+    .model-dropdown-item {
+        display: block;
+        width: 100%;
+        padding: 12px 16px;
+        border: none;
+        background: white;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.15s;
+        border-bottom: 1px solid #F5F5F5;
+    }
+
+    .model-dropdown-item:last-child {
+        border-bottom: none;
+        border-radius: 0 0 12px 12px;
+    }
+
+    .model-dropdown-item:first-child {
+        border-radius: 12px 12px 0 0;
+    }
+
+    .model-dropdown-item:hover {
+        background: #F5F5F5;
+    }
+
+    .model-dropdown-item.selected {
+        background: #E3F2FD;
+        color: #2D3E5F;
+        font-weight: 500;
+    }
+
+    @@keyframes dropdownFade {
+        from {
+            opacity: 0;
+            transform: translateY(-8px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
 
     /* ==================== 消息横幅 ==================== */
@@ -675,6 +751,7 @@
     private int courseCount = 0;
     private int activityCount = 0;
     private int chatHistoryCount = 0;
+    private List<string> availableModels = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -714,17 +791,68 @@
         StateHasChanged();
     }
 
-    private void ApplyMoonshotPreset()
+    private void ApplyBigModelPreset()
     {
-        baseUrlInput = "https://api.moonshot.cn";
-        modelIdInput = "moonshot-v1-8k";
+        baseUrlInput = "https://open.bigmodel.cn/api/paas/v4";
+        modelIdInput = "glm-4-flash";
         StateHasChanged();
     }
 
-    private void ApplyGroqPreset()
+    private void ApplyQwenPreset()
     {
-        baseUrlInput = "https://api.groq.com/openai/v1";
-        modelIdInput = "llama-3.3-70b-versatile";
+        baseUrlInput = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        modelIdInput = "qwen-turbo";
+        StateHasChanged();
+    }
+
+    private async Task FetchModelsAsync()
+    {
+        // 如果已经有缓存或者缺少必要信息，不重复请求
+        if (availableModels.Count > 0 || string.IsNullOrWhiteSpace(apiKeyInput) || string.IsNullOrWhiteSpace(baseUrlInput))
+            return;
+
+        try
+        {
+            using var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKeyInput}");
+
+            // 构建 /models 端点 URL
+            var baseUrl = baseUrlInput.TrimEnd('/');
+            var modelsUrl = baseUrl.EndsWith("/models") ? baseUrl : $"{baseUrl}/models";
+
+            var response = await httpClient.GetAsync(modelsUrl);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.OK)
+            {
+                var json = await response.Content.ReadAsStringAsync();
+                var modelsData = System.Text.Json.JsonDocument.Parse(json);
+
+                // 解析模型列表（OpenAI 格式：data 数组，每个元素有 id 字段）
+                if (modelsData.RootElement.TryGetProperty("data", out var data))
+                {
+                    availableModels.Clear();
+                    foreach (var model in data.EnumerateArray())
+                    {
+                        if (model.TryGetProperty("id", out var id))
+                        {
+                            availableModels.Add(id.GetString() ?? "");
+                        }
+                    }
+                    StateHasChanged();
+                }
+            }
+            // 非 200 状态码静默处理
+        }
+        catch
+        {
+            // 静默处理失败
+        }
+    }
+
+    private void SelectModel(string modelId)
+    {
+        modelIdInput = modelId;
+        availableModels.Clear(); // 选择后清空列表，隐藏下拉框
         StateHasChanged();
     }
 
