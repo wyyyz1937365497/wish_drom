@@ -1,7 +1,6 @@
 using Microsoft.Maui.Controls;
 using System.Diagnostics;
 using Microsoft.Maui.Graphics;
-using System.Text.Json;
 using wish_drom.Models;
 using wish_drom.Services.Interfaces;
 
@@ -24,21 +23,8 @@ namespace wish_drom.Services
 
         private static void Log(string msg)
         {
-            // #region agent log
-            var payload = JsonSerializer.Serialize(new
-            {
-                sessionId = "694279",
-                runId = "pre-fix",
-                hypothesisId = "H1",
-                location = "DataCaptureService.cs:Log",
-                message = "进入 DataCaptureService.Log",
-                data = new { msgLength = msg?.Length ?? 0, preview = msg?.Length > 80 ? msg[..80] : msg },
-                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-            });
-            File.AppendAllText("/Users/mike/Documents/University/Digital_Twin/wish_drom/.cursor/debug-694279.log", payload + Environment.NewLine);
-            // #endregion
             Console.WriteLine(msg);
-            Log(msg);
+            Debug.WriteLine(msg);
         }
 
         public DataCaptureService()

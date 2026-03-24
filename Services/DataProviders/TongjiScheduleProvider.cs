@@ -18,10 +18,10 @@ namespace wish_drom.Services.DataProviders
         private static void Log(string msg)
         {
             Console.WriteLine(msg);
-            Log(msg);
+            Debug.WriteLine(msg);
         }
 
-        private const string API_BASE = "https://1.tongji.edu.cn";
+        private const string API_BASE = "https://1.tongji.edu.cn/workbench";
 
         private const string CALENDAR_API_PATH = "/api/baseresservice/schoolCalendar/currentTermCalendar";
         private const string TIMETABLE_API_PATH = "/api/electionservice/reportManagement/findStudentTimetab";
@@ -37,7 +37,7 @@ namespace wish_drom.Services.DataProviders
 
         public bool IsReadyForExtraction(string currentUrl, string html)
         {
-            return currentUrl.StartsWith("https://1.tongji.edu.cn", StringComparison.OrdinalIgnoreCase)
+            return currentUrl.StartsWith("https://1.tongji.edu.cn/workbench", StringComparison.OrdinalIgnoreCase)
                 && !currentUrl.Contains("ids.tongji.edu.cn", StringComparison.OrdinalIgnoreCase);
         }
 
