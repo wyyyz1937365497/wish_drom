@@ -1,4 +1,4 @@
-﻿using Microsoft.Maui.Platform;
+using Microsoft.Maui.Platform;
 
 namespace wish_drom
 {
@@ -16,7 +16,7 @@ namespace wish_drom
                 Width = 400,  // 类似手机宽度
                 Height = 850, // 类似手机高度
                 Title = "智能校园助手",
-                Page = new MainPage()
+                Page = new NavigationPage(new MainPage())
             };
         }
     }

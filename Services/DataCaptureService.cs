@@ -1,6 +1,7 @@
 using Microsoft.Maui.Controls;
 using System.Diagnostics;
 using Microsoft.Maui.Graphics;
+using System.Text.Json;
 using wish_drom.Models;
 using wish_drom.Services.Interfaces;
 
@@ -19,6 +20,26 @@ namespace wish_drom.Services
         private ContentPage? _webViewPage;
         private CancellationTokenSource? _captureCts;
         private readonly ISecureDataStorage _secureStorage;
+        private string _lastPolledUrl = "";
+
+        private static void Log(string msg)
+        {
+            // #region agent log
+            var payload = JsonSerializer.Serialize(new
+            {
+                sessionId = "694279",
+                runId = "pre-fix",
+                hypothesisId = "H1",
+                location = "DataCaptureService.cs:Log",
+                message = "进入 DataCaptureService.Log",
+                data = new { msgLength = msg?.Length ?? 0, preview = msg?.Length > 80 ? msg[..80] : msg },
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+            File.AppendAllText("/Users/mike/Documents/University/Digital_Twin/wish_drom/.cursor/debug-694279.log", payload + Environment.NewLine);
+            // #endregion
+            Console.WriteLine(msg);
+            Log(msg);
+        }
 
         public DataCaptureService()
         {
@@ -37,7 +58,7 @@ namespace wish_drom.Services
                 ToolDescription = toolDescription ?? $"从 {displayName} 获取数据"
             };
 
-            Debug.WriteLine($"[DataCapture] 已注册数据源: {displayName} ({id})");
+            Log($"[DataCapture] 已注册数据源: {displayName} ({id})");
         }
 
         public List<DataSourceConfig> GetRegisteredSources()
@@ -62,13 +83,12 @@ namespace wish_drom.Services
 
             MainThread.BeginInvokeOnMainThread(async () =>
             {
-                // 尝试使用已缓存的凭证静默获取数据
                 try
                 {
                     var cachedData = await source.Provider.FetchDataAsync(_secureStorage);
                     if (!string.IsNullOrEmpty(cachedData))
                     {
-                        Debug.WriteLine("[DataCapture] 使用缓存凭证静默获取数据成功");
+                        Log("[DataCapture] 使用缓存凭证静默获取数据成功");
                         _onResult?.Invoke(new CaptureResult
                         {
                             Success = true,
@@ -79,14 +99,13 @@ namespace wish_drom.Services
                 }
                 catch (AuthExpiredException)
                 {
-                    Debug.WriteLine("[DataCapture] 凭证已过期，进入登录流程");
+                    Log("[DataCapture] 凭证已过期，进入登录流程");
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[DataCapture] 静默获取失败: {ex.Message}，进入登录流程");
+                    Log($"[DataCapture] 静默获取失败: {ex.Message}，进入登录流程");
                 }
 
-                // 凭证不可用，走 WebView 登录流程
                 await RunWebViewCaptureAsync(source, _captureCts.Token);
             });
         }
@@ -108,13 +127,18 @@ namespace wish_drom.Services
                     Source = source.Url
                 };
 
+                Log($"[WebView] ====== 开始 WebView 会话 ======");
+                Log($"[WebView] 初始 URL: {source.Url}");
+
                 var statusLabel = new Label
                 {
-                    Text = $"正在访问 {source.DisplayName}...",
+                    Text = $"正在访问 {source.DisplayName}...\nURL: {source.Url}",
                     HorizontalTextAlignment = TextAlignment.Center,
                     Margin = new Thickness(16, 8),
-                    FontSize = 14,
-                    TextColor = Colors.Gray
+                    FontSize = 11,
+                    TextColor = Colors.Gray,
+                    LineBreakMode = LineBreakMode.TailTruncation,
+                    MaxLines = 3
                 };
 
                 var extractButton = new Button
@@ -136,6 +160,72 @@ namespace wish_drom.Services
                     CornerRadius = 8
                 };
 
+                // ──────── Navigating 事件：导航发生前 ────────
+                _currentWebView.Navigating += (sender, e) =>
+                {
+                    Log($"[WebView] >>> NAVIGATING to: {e.Url}");
+                    Log($"[WebView]     NavigationEvent: {e.NavigationEvent}");
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        statusLabel.Text = $"正在跳转...\nURL: {e.Url}";
+                    });
+                };
+
+                // ──────── Navigated 事件：导航完成后（增强日志） ────────
+                _currentWebView.Navigated += async (sender, e) =>
+                {
+                    Log($"[WebView] <<< NAVIGATED");
+                    Log($"[WebView]     Event URL: {e.Url}");
+                    Log($"[WebView]     Result: {e.Result}");
+                    Log($"[WebView]     NavigationEvent: {e.NavigationEvent}");
+
+                    try
+                    {
+                        var sourceUrl = _currentWebView?.Source?.ToString() ?? "(null)";
+                        Log($"[WebView]     WebView.Source: {sourceUrl}");
+
+                        if (_currentWebView == null) return;
+
+                        var title = await _currentWebView.EvaluateJavaScriptAsync("document.title");
+                        Log($"[WebView]     Page Title: {title}");
+
+                        var jsUrl = await _currentWebView.EvaluateJavaScriptAsync("window.location.href");
+                        Log($"[WebView]     JS location.href: {jsUrl}");
+
+                        var cookies = await _currentWebView.EvaluateJavaScriptAsync("document.cookie");
+                        var cookiePreview = string.IsNullOrEmpty(cookies)
+                            ? "(empty)"
+                            : (cookies.Length > 120 ? cookies[..120] + "..." : cookies);
+                        Log($"[WebView]     Cookies ({cookies?.Length ?? 0} chars): {cookiePreview}");
+
+                        var html = await _currentWebView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
+                        Log($"[WebView]     HTML length: {html?.Length ?? 0}");
+
+                        var urlToCheck = jsUrl ?? e.Url;
+                        var isReady = source.Provider.IsReadyForExtraction(urlToCheck, html ?? "");
+                        Log($"[WebView]     IsReadyForExtraction: {isReady}");
+
+                        MainThread.BeginInvokeOnMainThread(() =>
+                        {
+                            if (isReady)
+                            {
+                                statusLabel.Text = $"登录成功！可以提取数据\nURL: {urlToCheck}";
+                                extractButton.IsEnabled = true;
+                            }
+                            else
+                            {
+                                statusLabel.Text = $"请登录...\nURL: {urlToCheck}";
+                                extractButton.IsEnabled = false;
+                            }
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"[WebView]     Navigated handler error: {ex.Message}");
+                    }
+                };
+
+                // ──────── 提取数据按钮 ────────
                 extractButton.Clicked += async (sender, e) =>
                 {
                     extractButton.IsEnabled = false;
@@ -147,6 +237,8 @@ namespace wish_drom.Services
                         var html = await _currentWebView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
                         var currentUrl = _currentWebView.Source?.ToString() ?? source.Url;
 
+                        Log($"[DataCapture] 开始提取，当前 URL: {currentUrl}，HTML 长度: {html?.Length ?? 0}");
+
                         if (string.IsNullOrEmpty(html))
                         {
                             tcs.TrySetResult(new CaptureResult
@@ -157,21 +249,23 @@ namespace wish_drom.Services
                             return;
                         }
 
-                        // 构建跨平台异步 JS 执行器委托
                         Func<string, Task<string?>> jsExecutor = EvaluateAsyncJavaScriptAsync;
 
-                        // 阶段一：凭证提取（在 WebView 上下文中执行）
                         statusLabel.Text = "正在提取凭证...";
+                        Log("[DataCapture] 阶段一：开始 ExtractDataAsync");
                         var extractResult = await source.Provider.ExtractDataAsync(html, _secureStorage, jsExecutor);
+                        Log($"[DataCapture] 阶段一结果: {extractResult}");
 
                         if (extractResult == "CredentialsStored")
                         {
-                            // 阶段二：使用提取的凭证获取业务数据
                             statusLabel.Text = "正在获取课表数据...";
+                            Log("[DataCapture] 阶段二：开始 FetchDataAsync");
                             var businessData = await source.Provider.FetchDataAsync(_secureStorage);
+                            Log($"[DataCapture] 阶段二结果: {(businessData != null ? $"{businessData.Length} chars" : "null")}");
 
                             if (!string.IsNullOrEmpty(businessData))
                             {
+                                Log($"[DataCapture] 数据预览: {businessData[..Math.Min(300, businessData.Length)]}");
                                 tcs.TrySetResult(new CaptureResult
                                 {
                                     Success = true,
@@ -189,7 +283,6 @@ namespace wish_drom.Services
                         }
                         else if (!string.IsNullOrEmpty(extractResult))
                         {
-                            // Provider 直接返回了业务数据（传统 HTML 解析模式）
                             tcs.TrySetResult(new CaptureResult
                             {
                                 Success = true,
@@ -207,7 +300,7 @@ namespace wish_drom.Services
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"[DataCapture] 提取异常: {ex}");
+                        Log($"[DataCapture] 提取异常: {ex}");
                         tcs.TrySetResult(new CaptureResult
                         {
                             Success = false,
@@ -223,31 +316,6 @@ namespace wish_drom.Services
                         Success = false,
                         Error = "用户取消"
                     });
-                };
-
-                _currentWebView.Navigated += async (sender, e) =>
-                {
-                    Debug.WriteLine($"[DataCapture] 导航到: {e.Url}");
-
-                    try
-                    {
-                        var html = await _currentWebView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
-
-                        if (source.Provider.IsReadyForExtraction(e.Url, html))
-                        {
-                            statusLabel.Text = "检测到数据页面，可以提取数据";
-                            extractButton.IsEnabled = true;
-                        }
-                        else
-                        {
-                            statusLabel.Text = "请登录或导航到数据页面...";
-                            extractButton.IsEnabled = false;
-                        }
-                    }
-                    catch
-                    {
-                        // 页面可能还在加载
-                    }
                 };
 
                 _webViewPage.Content = new StackLayout
@@ -275,14 +343,58 @@ namespace wish_drom.Services
                     await mainPage.Navigation.PushAsync(_webViewPage);
                 }
 
+                // ──────── URL 变化轮询（兜底：JS 跳转不触发 Navigating/Navigated） ────────
+                _lastPolledUrl = source.Url;
+                _ = Task.Run(async () =>
+                {
+                    while (!cancellationToken.IsCancellationRequested && !tcs.Task.IsCompleted)
+                    {
+                        await Task.Delay(2000, cancellationToken);
+
+                        try
+                        {
+                            if (_currentWebView == null) break;
+
+                            var currentHref = await MainThread.InvokeOnMainThreadAsync(async () =>
+                                await _currentWebView.EvaluateJavaScriptAsync("window.location.href"));
+
+                            if (!string.IsNullOrEmpty(currentHref) && currentHref != _lastPolledUrl)
+                            {
+                                Log($"[WebView-Poll] URL 变化: {_lastPolledUrl} -> {currentHref}");
+                                _lastPolledUrl = currentHref;
+
+                                var isReady = source.Provider.IsReadyForExtraction(currentHref, "");
+                                if (isReady)
+                                {
+                                    Log($"[WebView-Poll] IsReadyForExtraction=true，启用提取按钮");
+                                    MainThread.BeginInvokeOnMainThread(() =>
+                                    {
+                                        statusLabel.Text = $"登录成功！可以提取数据\nURL: {currentHref}";
+                                        extractButton.IsEnabled = true;
+                                    });
+                                }
+                            }
+                        }
+                        catch (TaskCanceledException) { break; }
+                        catch (Exception ex)
+                        {
+                            Log($"[WebView-Poll] 轮询异常: {ex.Message}");
+                        }
+                    }
+
+                    Log("[WebView-Poll] 轮询结束");
+                }, cancellationToken);
+
                 var result = await tcs.Task;
 
+                _captureCts?.Cancel();
                 await CloseWebViewAsync();
 
                 _onResult?.Invoke(result);
             }
             catch (Exception ex)
             {
+                _captureCts?.Cancel();
                 await CloseWebViewAsync();
                 _onResult?.Invoke(new CaptureResult
                 {
@@ -329,14 +441,14 @@ namespace wish_drom.Services
 
                     if (result.Contains("\"__error\""))
                     {
-                        Debug.WriteLine($"[DataCapture] JS 执行错误: {result}");
+                        Log($"[DataCapture] JS 执行错误: {result}");
                         return null;
                     }
                     return result;
                 }
             }
 
-            Debug.WriteLine($"[DataCapture] JS 执行超时: {asyncExpression[..Math.Min(100, asyncExpression.Length)]}");
+            Log($"[DataCapture] JS 执行超时: {asyncExpression[..Math.Min(100, asyncExpression.Length)]}");
             return null;
         }
 
@@ -368,12 +480,18 @@ namespace wish_drom.Services
             var cookieManager = Android.Webkit.CookieManager.Instance;
             cookieManager.RemoveAllCookies(null);
 #endif
-#if IOS
+#if IOS || MACCATALYST
             Foundation.NSHttpCookieStorage storage = Foundation.NSHttpCookieStorage.SharedStorage;
             foreach (var cookie in storage.Cookies)
             {
                 storage.DeleteCookie(cookie);
             }
+
+            var dataStore = WebKit.WKWebsiteDataStore.DefaultDataStore;
+            var dataTypes = WebKit.WKWebsiteDataStore.AllWebsiteDataTypes;
+            var dateFrom = Foundation.NSDate.FromTimeIntervalSinceReferenceDate(0);
+            await dataStore.RemoveDataOfTypesAsync(dataTypes, dateFrom);
+            Log("[DataCapture] Mac Catalyst / iOS WebKit 数据已清理");
 #endif
             await _secureStorage.ClearAsync();
         }

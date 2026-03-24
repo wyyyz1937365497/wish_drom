@@ -15,6 +15,12 @@ namespace wish_drom.Services.DataProviders
     /// </summary>
     public class TongjiScheduleProvider : IDataProvider
     {
+        private static void Log(string msg)
+        {
+            Console.WriteLine(msg);
+            Log(msg);
+        }
+
         private const string API_BASE = "https://1.tongji.edu.cn";
 
         private const string CALENDAR_API_PATH = "/api/baseresservice/schoolCalendar/currentTermCalendar";
@@ -42,7 +48,7 @@ namespace wish_drom.Services.DataProviders
         {
             if (evaluateJavaScript == null)
             {
-                Debug.WriteLine("[TongjiProvider] JS 执行器为空，无法提取凭证");
+                Log("[TongjiProvider] JS 执行器为空，无法提取凭证");
                 return null;
             }
 
@@ -52,18 +58,18 @@ namespace wish_drom.Services.DataProviders
                 var cookieString = await evaluateJavaScript("document.cookie");
                 if (string.IsNullOrEmpty(cookieString))
                 {
-                    Debug.WriteLine("[TongjiProvider] 无法获取 Cookie");
+                    Log("[TongjiProvider] 无法获取 Cookie");
                     return null;
                 }
                 await secureStorage.SetAsync(COOKIE_KEY, cookieString);
-                Debug.WriteLine($"[TongjiProvider] Cookie 已存储 ({cookieString.Length} 字符)");
+                Log($"[TongjiProvider] Cookie 已存储 ({cookieString.Length} 字符)");
 
                 // 步骤 2：从 sessionStorage 提取 sessionid（用于 X-Token 请求头）
                 var sessionId = await evaluateJavaScript("sessionStorage.getItem('sessionid')");
                 if (!string.IsNullOrEmpty(sessionId))
                 {
                     await secureStorage.SetAsync(SESSION_ID_KEY, sessionId);
-                    Debug.WriteLine("[TongjiProvider] sessionId (X-Token) 已存储");
+                    Log("[TongjiProvider] sessionId (X-Token) 已存储");
                 }
 
                 // 步骤 3：从 localStorage 提取 sessiondata，解析 uid / aesKey / aesIv
@@ -86,16 +92,16 @@ namespace wish_drom.Services.DataProviders
                     {
                         var encryptedStudentCode = EncryptStudentCode(uid, aesKey, aesIv);
                         await secureStorage.SetAsync(STUDENT_CODE_KEY, encryptedStudentCode);
-                        Debug.WriteLine("[TongjiProvider] 加密 studentCode 已生成并存储");
+                        Log("[TongjiProvider] 加密 studentCode 已生成并存储");
                     }
                     else
                     {
-                        Debug.WriteLine($"[TongjiProvider] sessiondata 缺少必要字段 uid={uid != null} aesKey={aesKey != null} aesIv={aesIv != null}");
+                        Log($"[TongjiProvider] sessiondata 缺少必要字段 uid={uid != null} aesKey={aesKey != null} aesIv={aesIv != null}");
                     }
                 }
                 else
                 {
-                    Debug.WriteLine("[TongjiProvider] 无法从 localStorage 读取 sessiondata");
+                    Log("[TongjiProvider] 无法从 localStorage 读取 sessiondata");
                 }
 
                 // 步骤 4：通过 WebView 内 fetch 获取当前学期 calendarId
@@ -115,11 +121,11 @@ namespace wish_drom.Services.DataProviders
                     if (!string.IsNullOrEmpty(calendarId))
                     {
                         await secureStorage.SetAsync(CALENDAR_ID_KEY, calendarId);
-                        Debug.WriteLine($"[TongjiProvider] calendarId 已缓存: {calendarId}");
+                        Log($"[TongjiProvider] calendarId 已缓存: {calendarId}");
                     }
                     else
                     {
-                        Debug.WriteLine($"[TongjiProvider] 未能提取 calendarId，原始响应: {calendarJson[..Math.Min(200, calendarJson.Length)]}");
+                        Log($"[TongjiProvider] 未能提取 calendarId，原始响应: {calendarJson[..Math.Min(200, calendarJson.Length)]}");
                     }
                 }
 
@@ -127,7 +133,7 @@ namespace wish_drom.Services.DataProviders
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[TongjiProvider] ExtractDataAsync 异常: {ex}");
+                Log($"[TongjiProvider] ExtractDataAsync 异常: {ex}");
                 return null;
             }
         }
@@ -162,7 +168,7 @@ namespace wish_drom.Services.DataProviders
                                $"&studentCode={studentCode}" +
                                $"&_t={timestamp}";
 
-            Debug.WriteLine($"[TongjiProvider] 请求课表: {timetableUrl}");
+            Log($"[TongjiProvider] 请求课表: {timetableUrl}");
 
             var response = await httpClient.GetAsync(timetableUrl);
 
@@ -177,7 +183,7 @@ namespace wish_drom.Services.DataProviders
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();
-            Debug.WriteLine($"[TongjiProvider] 课表数据获取成功 ({content.Length} 字符)");
+            Log($"[TongjiProvider] 课表数据获取成功 ({content.Length} 字符)");
 
             return content;
         }
@@ -196,7 +202,7 @@ namespace wish_drom.Services.DataProviders
 
             var encrypted = EncryptStudentCode(uid, aesKey, aesIv);
             await secureStorage.SetAsync(STUDENT_CODE_KEY, encrypted);
-            Debug.WriteLine("[TongjiProvider] studentCode 已从缓存参数重新生成");
+            Log("[TongjiProvider] studentCode 已从缓存参数重新生成");
             return encrypted;
         }
 
@@ -212,7 +218,7 @@ namespace wish_drom.Services.DataProviders
                 if (!response.IsSuccessStatusCode)
                 {
                     HandleAuthError(response.StatusCode);
-                    Debug.WriteLine($"[TongjiProvider] 获取日历失败: {response.StatusCode}");
+                    Log($"[TongjiProvider] 获取日历失败: {response.StatusCode}");
                     return null;
                 }
 
@@ -222,7 +228,7 @@ namespace wish_drom.Services.DataProviders
                 if (!string.IsNullOrEmpty(calendarId))
                 {
                     await secureStorage.SetAsync(CALENDAR_ID_KEY, calendarId);
-                    Debug.WriteLine($"[TongjiProvider] calendarId 已获取并缓存: {calendarId}");
+                    Log($"[TongjiProvider] calendarId 已获取并缓存: {calendarId}");
                 }
 
                 return calendarId;
@@ -230,7 +236,7 @@ namespace wish_drom.Services.DataProviders
             catch (AuthExpiredException) { throw; }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[TongjiProvider] 获取 calendarId 异常: {ex.Message}");
+                Log($"[TongjiProvider] 获取 calendarId 异常: {ex.Message}");
                 return null;
             }
         }
@@ -328,7 +334,7 @@ namespace wish_drom.Services.DataProviders
             }
             catch (JsonException ex)
             {
-                Debug.WriteLine($"[TongjiProvider] JSON 解析失败: {ex.Message}");
+                Log($"[TongjiProvider] JSON 解析失败: {ex.Message}");
             }
             return null;
         }
@@ -358,7 +364,7 @@ namespace wish_drom.Services.DataProviders
             }
             catch (JsonException ex)
             {
-                Debug.WriteLine($"[TongjiProvider] JSON 解析失败: {ex.Message}");
+                Log($"[TongjiProvider] JSON 解析失败: {ex.Message}");
             }
 
             return null;
