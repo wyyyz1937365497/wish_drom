@@ -1,6 +1,7 @@
 using Microsoft.Maui.Controls;
 using System.Diagnostics;
 using Microsoft.Maui.Graphics;
+using System.Text.Json;
 using wish_drom.Models;
 using wish_drom.Services.Interfaces;
 
@@ -17,6 +18,7 @@ namespace wish_drom.Services
         private Action<CaptureResult>? _onResult;
         private WebView? _currentWebView;
         private ContentPage? _webViewPage;
+        private bool _webViewPresentedModally;
         private CancellationTokenSource? _captureCts;
         private readonly ISecureDataStorage _secureStorage;
         private string _lastPolledUrl = "";
@@ -235,7 +237,7 @@ namespace wish_drom.Services
                             return;
                         }
 
-                        Func<string, Task<string?>> jsExecutor = EvaluateAsyncJavaScriptAsync;
+                        Func<string, Task<string?>> jsExecutor = ExecuteJavaScriptForProviderAsync;
 
                         statusLabel.Text = "正在提取凭证...";
                         Log("[DataCapture] 阶段一：开始 ExtractDataAsync");
@@ -304,29 +306,41 @@ namespace wish_drom.Services
                     });
                 };
 
-                _webViewPage.Content = new StackLayout
+                var layoutGrid = new Grid
                 {
-                    VerticalOptions = LayoutOptions.FillAndExpand,
-                    Children =
+                    RowDefinitions =
                     {
-                        statusLabel,
-                        new Frame
-                        {
-                            HeightRequest = DeviceDisplay.MainDisplayInfo.Height / 2,
-                            CornerRadius = 0,
-                            Padding = 0,
-                            Content = _currentWebView,
-                            HasShadow = false
-                        },
-                        extractButton,
-                        cancelButton
+                        new RowDefinition { Height = GridLength.Auto },
+                        new RowDefinition { Height = new GridLength(1, GridUnitType.Star) },
+                        new RowDefinition { Height = GridLength.Auto },
+                        new RowDefinition { Height = GridLength.Auto }
                     }
                 };
 
-                var mainPage = Application.Current?.MainPage;
-                if (mainPage != null)
+                var webViewContainer = new Border
                 {
-                    await mainPage.Navigation.PushAsync(_webViewPage);
+                    StrokeThickness = 0,
+                    Stroke = Colors.Transparent,
+                    Content = _currentWebView
+                };
+
+                Grid.SetRow(statusLabel, 0);
+                Grid.SetRow(webViewContainer, 1);
+                Grid.SetRow(extractButton, 2);
+                Grid.SetRow(cancelButton, 3);
+
+                layoutGrid.Children.Add(statusLabel);
+                layoutGrid.Children.Add(webViewContainer);
+                layoutGrid.Children.Add(extractButton);
+                layoutGrid.Children.Add(cancelButton);
+
+                _webViewPage.Content = layoutGrid;
+
+                var rootPage = GetRootPage();
+                if (rootPage != null)
+                {
+                    await rootPage.Navigation.PushModalAsync(_webViewPage);
+                    _webViewPresentedModally = true;
                 }
 
                 // ──────── URL 变化轮询（兜底：JS 跳转不触发 Navigating/Navigated） ────────
@@ -395,6 +409,145 @@ namespace wish_drom.Services
         /// Android WebView 的 EvaluateJavaScriptAsync 不会自动 await Promise，
         /// 因此使用全局变量 + 轮询模式确保跨平台一致行为。
         /// </summary>
+        private async Task<string?> ExecuteJavaScriptForProviderAsync(string expression)
+        {
+            if (_currentWebView == null || string.IsNullOrWhiteSpace(expression))
+                return null;
+
+            if (string.Equals(expression, "__native_cookies__", StringComparison.Ordinal))
+            {
+                return await TryGetNativeCookiesAsync();
+            }
+
+            // 简单表达式优先直接执行，避免额外包装带来的不确定性。
+            if (IsSimpleExpression(expression))
+            {
+                var directResult = await EvaluateJavaScriptWithTimeoutAsync(expression, 8000);
+                var normalizedDirect = NormalizeJavaScriptResult(directResult);
+                if (!string.IsNullOrEmpty(normalizedDirect) ||
+                    !expression.Contains("document.cookie", StringComparison.OrdinalIgnoreCase))
+                {
+                    return normalizedDirect;
+                }
+            }
+
+            var wrappedResult = await EvaluateAsyncJavaScriptAsync(expression);
+            return NormalizeJavaScriptResult(wrappedResult);
+        }
+
+        private async Task<string?> EvaluateJavaScriptWithTimeoutAsync(string script, int timeoutMs)
+        {
+            if (_currentWebView == null) return null;
+
+            try
+            {
+                var evalTask = MainThread.InvokeOnMainThreadAsync(() => _currentWebView.EvaluateJavaScriptAsync(script));
+                var completedTask = await Task.WhenAny(evalTask, Task.Delay(timeoutMs));
+
+                if (completedTask != evalTask)
+                {
+                    Log($"[DataCapture] JS 直接执行超时: {script[..Math.Min(100, script.Length)]}");
+                    return null;
+                }
+
+                return await evalTask;
+            }
+            catch (Exception ex)
+            {
+                Log($"[DataCapture] JS 直接执行失败: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static bool IsSimpleExpression(string expression)
+        {
+            return !expression.Contains('\n')
+                && !expression.Contains('\r')
+                && !expression.Contains("=>", StringComparison.Ordinal)
+                && !expression.Contains("fetch(", StringComparison.OrdinalIgnoreCase)
+                && !expression.Contains("await ", StringComparison.OrdinalIgnoreCase)
+                && !expression.Contains("function", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string? NormalizeJavaScriptResult(string? result)
+        {
+            if (string.IsNullOrWhiteSpace(result))
+                return null;
+
+            var trimmed = result.Trim();
+            if (trimmed == "null" || trimmed == "undefined")
+                return null;
+
+            if (trimmed.Length >= 2 && trimmed.StartsWith('"') && trimmed.EndsWith('"'))
+            {
+                try
+                {
+                    return JsonSerializer.Deserialize<string>(trimmed) ?? trimmed.Trim('"');
+                }
+                catch
+                {
+                    return trimmed.Trim('"');
+                }
+            }
+
+            return trimmed;
+        }
+
+        private async Task<string?> TryGetNativeCookiesAsync()
+        {
+            var currentUrl = await EvaluateJavaScriptWithTimeoutAsync("window.location.href", 5000);
+            currentUrl = NormalizeJavaScriptResult(currentUrl) ?? _currentWebView?.Source?.ToString();
+
+            if (string.IsNullOrWhiteSpace(currentUrl))
+                return null;
+
+            try
+            {
+#if ANDROID
+                var cookies = Android.Webkit.CookieManager.Instance.GetCookie(currentUrl);
+                return NormalizeJavaScriptResult(cookies);
+#elif WINDOWS
+                if (_currentWebView?.Handler?.PlatformView is Microsoft.UI.Xaml.Controls.WebView2 webView2 &&
+                    webView2.CoreWebView2 != null)
+                {
+                    var cookieItems = await webView2.CoreWebView2.CookieManager.GetCookiesAsync(currentUrl);
+                    if (cookieItems == null || cookieItems.Count == 0)
+                        return null;
+
+                    var parts = new List<string>(cookieItems.Count);
+                    foreach (var cookie in cookieItems)
+                    {
+                        parts.Add($"{cookie.Name}={cookie.Value}");
+                    }
+
+                    return string.Join("; ", parts);
+                }
+
+                return null;
+#elif IOS || MACCATALYST
+                var nsUrl = new Foundation.NSUrl(currentUrl);
+                var storage = Foundation.NSHttpCookieStorage.SharedStorage;
+                var cookies = storage.CookiesForUrl(nsUrl);
+                if (cookies == null || cookies.Length == 0)
+                    return null;
+
+                var parts = new List<string>(cookies.Length);
+                foreach (var cookie in cookies)
+                {
+                    parts.Add($"{cookie.Name}={cookie.Value}");
+                }
+                return string.Join("; ", parts);
+#else
+                return null;
+#endif
+            }
+            catch (Exception ex)
+            {
+                Log($"[DataCapture] 获取原生 Cookie 失败: {ex.Message}");
+                return null;
+            }
+        }
+
         private async Task<string?> EvaluateAsyncJavaScriptAsync(string asyncExpression)
         {
             if (_currentWebView == null) return null;
@@ -414,16 +567,16 @@ namespace wish_drom.Services
                 }})();
             ";
 
-            await _currentWebView.EvaluateJavaScriptAsync(wrappedScript);
+            await MainThread.InvokeOnMainThreadAsync(() => _currentWebView.EvaluateJavaScriptAsync(wrappedScript));
 
             for (int i = 0; i < 60; i++)
             {
                 await Task.Delay(500);
-                var result = await _currentWebView.EvaluateJavaScriptAsync($"window['{resultKey}']");
+                var result = await MainThread.InvokeOnMainThreadAsync(() => _currentWebView.EvaluateJavaScriptAsync($"window['{resultKey}']"));
 
                 if (result != null && result != "null" && result != "undefined")
                 {
-                    await _currentWebView.EvaluateJavaScriptAsync($"delete window['{resultKey}']");
+                    await MainThread.InvokeOnMainThreadAsync(() => _currentWebView.EvaluateJavaScriptAsync($"delete window['{resultKey}']"));
 
                     if (result.Contains("\"__error\""))
                     {
@@ -442,16 +595,27 @@ namespace wish_drom.Services
         {
             try
             {
-                var mainPage = Application.Current?.MainPage;
-                if (mainPage != null && _webViewPage != null && mainPage.Navigation.NavigationStack.Contains(_webViewPage))
+                var rootPage = GetRootPage();
+                if (rootPage != null && _webViewPage != null)
                 {
-                    await mainPage.Navigation.PopAsync();
+                    if (_webViewPresentedModally && rootPage.Navigation.ModalStack.Contains(_webViewPage))
+                    {
+                        await rootPage.Navigation.PopModalAsync();
+                    }
+                    else if (rootPage.Navigation.NavigationStack.Contains(_webViewPage))
+                    {
+                        await rootPage.Navigation.PopAsync();
+                    }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log($"[DataCapture] 关闭 WebView 页面失败: {ex.Message}");
+            }
 
             _currentWebView = null;
             _webViewPage = null;
+            _webViewPresentedModally = false;
         }
 
         public void CancelCapture()
@@ -480,6 +644,13 @@ namespace wish_drom.Services
             Log("[DataCapture] Mac Catalyst / iOS WebKit 数据已清理");
 #endif
             await _secureStorage.ClearAsync();
+        }
+
+        private static Page? GetRootPage()
+        {
+            return Application.Current?.Windows
+                .FirstOrDefault(window => window.Page != null)
+                ?.Page;
         }
     }
 }

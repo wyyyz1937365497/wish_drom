@@ -54,8 +54,8 @@ namespace wish_drom.Services.DataProviders
 
             try
             {
-                // 步骤 1：从 WebView 中提取 Cookie
-                var cookieString = await evaluateJavaScript("document.cookie");
+                // 步骤 1：从 WebView 中提取 Cookie（JS + cookieStore + 原生回退）
+                var cookieString = await TryGetCookieStringAsync(evaluateJavaScript);
                 if (string.IsNullOrEmpty(cookieString))
                 {
                     Log("[TongjiProvider] 无法获取 Cookie");
@@ -65,7 +65,7 @@ namespace wish_drom.Services.DataProviders
                 Log($"[TongjiProvider] Cookie 已存储 ({cookieString.Length} 字符)");
 
                 // 步骤 2：从 sessionStorage 提取 sessionid（用于 X-Token 请求头）
-                var sessionId = await evaluateJavaScript("sessionStorage.getItem('sessionid')");
+                var sessionId = await TryGetSessionIdAsync(evaluateJavaScript);
                 if (!string.IsNullOrEmpty(sessionId))
                 {
                     await secureStorage.SetAsync(SESSION_ID_KEY, sessionId);
@@ -73,7 +73,7 @@ namespace wish_drom.Services.DataProviders
                 }
 
                 // 步骤 3：从 localStorage 提取 sessiondata，解析 uid / aesKey / aesIv
-                var sessionDataRaw = await evaluateJavaScript("localStorage.getItem('sessiondata')");
+                var sessionDataRaw = NormalizeJavaScriptValue(await evaluateJavaScript("localStorage.getItem('sessiondata')"));
                 if (!string.IsNullOrEmpty(sessionDataRaw))
                 {
                     var uid = TryExtractTopLevelField(sessionDataRaw, "uid");
@@ -104,30 +104,10 @@ namespace wish_drom.Services.DataProviders
                     Log("[TongjiProvider] 无法从 localStorage 读取 sessiondata");
                 }
 
-                // 步骤 4：通过 WebView 内 fetch 获取当前学期 calendarId
-                var calendarScript = $@"
-                    fetch('{CALENDAR_API_PATH}?_t=' + Date.now(), {{
-                        credentials: 'include',
-                        headers: {{ 'Accept': 'application/json' }}
-                    }})
-                    .then(r => r.ok ? r.json() : Promise.reject('HTTP ' + r.status))
-                    .then(d => JSON.stringify(d))
-                ";
+                // 步骤 4：calendarId 统一在阶段二通过原生 HTTP 获取，避免 WebView JS fetch 超时噪声。
+                Log("[TongjiProvider] 跳过阶段一 calendarId 提取，将在阶段二通过 HTTP 获取");
 
-                var calendarJson = await evaluateJavaScript(calendarScript);
-                if (!string.IsNullOrEmpty(calendarJson))
-                {
-                    var calendarId = TryExtractNestedField(calendarJson, "data", "schoolCalendar", "id");
-                    if (!string.IsNullOrEmpty(calendarId))
-                    {
-                        await secureStorage.SetAsync(CALENDAR_ID_KEY, calendarId);
-                        Log($"[TongjiProvider] calendarId 已缓存: {calendarId}");
-                    }
-                    else
-                    {
-                        Log($"[TongjiProvider] 未能提取 calendarId，原始响应: {calendarJson[..Math.Min(200, calendarJson.Length)]}");
-                    }
-                }
+                await LogCredentialSummaryAsync(secureStorage);
 
                 return "CredentialsStored";
             }
@@ -314,6 +294,131 @@ namespace wish_drom.Services.DataProviders
             return client;
         }
 
+        private static async Task<string?> TryGetCookieStringAsync(Func<string, Task<string?>> evaluateJavaScript)
+        {
+            var cookie = NormalizeJavaScriptValue(await evaluateJavaScript("document.cookie"));
+            if (!string.IsNullOrEmpty(cookie))
+            {
+                Log($"[TongjiProvider] Cookie 来源: document.cookie (len={cookie.Length}, items={CountCookieItems(cookie)})");
+                return cookie;
+            }
+
+            var cookieStoreScript = @"
+                (async () => {
+                    if (window.cookieStore && window.cookieStore.getAll) {
+                        const all = await window.cookieStore.getAll();
+                        return all.map(c => `${c.name}=${c.value}`).join('; ');
+                    }
+                    return '';
+                })()
+            ";
+
+            cookie = NormalizeJavaScriptValue(await evaluateJavaScript(cookieStoreScript));
+            if (!string.IsNullOrEmpty(cookie))
+            {
+                Log($"[TongjiProvider] Cookie 来源: cookieStore.getAll (len={cookie.Length}, items={CountCookieItems(cookie)})");
+                return cookie;
+            }
+
+            // 由 DataCaptureService 提供平台层 Cookie 回退（适配 HttpOnly 场景）
+            cookie = NormalizeJavaScriptValue(await evaluateJavaScript("__native_cookies__"));
+            if (!string.IsNullOrEmpty(cookie))
+            {
+                Log($"[TongjiProvider] Cookie 来源: native cookie manager (len={cookie.Length}, items={CountCookieItems(cookie)})");
+                return cookie;
+            }
+
+            Log("[TongjiProvider] Cookie 来源: 全部失败 (document.cookie/cookieStore/native)");
+            return null;
+        }
+
+        private static async Task<string?> TryGetSessionIdAsync(Func<string, Task<string?>> evaluateJavaScript)
+        {
+            var probes = new[]
+            {
+                "sessionStorage.getItem('sessionid')",
+                "sessionStorage.getItem('sessionId')",
+                "localStorage.getItem('sessionid')",
+                "localStorage.getItem('sessionId')"
+            };
+
+            foreach (var probe in probes)
+            {
+                var value = NormalizeJavaScriptValue(await evaluateJavaScript(probe));
+                if (!string.IsNullOrEmpty(value))
+                    return value;
+            }
+
+            return null;
+        }
+
+        private static string? NormalizeJavaScriptValue(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            var trimmed = value.Trim();
+            if (trimmed == "null" || trimmed == "undefined")
+                return null;
+
+            if (trimmed.Length >= 2 && trimmed.StartsWith('"') && trimmed.EndsWith('"'))
+            {
+                try
+                {
+                    return JsonSerializer.Deserialize<string>(trimmed) ?? trimmed.Trim('"');
+                }
+                catch
+                {
+                    return trimmed.Trim('"');
+                }
+            }
+
+            return trimmed;
+        }
+
+        private static async Task LogCredentialSummaryAsync(ISecureDataStorage secureStorage)
+        {
+            var cookieString = await secureStorage.GetAsync(COOKIE_KEY);
+            var sessionId = await secureStorage.GetAsync(SESSION_ID_KEY);
+            var uid = await secureStorage.GetAsync(UID_KEY);
+            var aesKey = await secureStorage.GetAsync(AES_KEY_KEY);
+            var aesIv = await secureStorage.GetAsync(AES_IV_KEY);
+            var studentCode = await secureStorage.GetAsync(STUDENT_CODE_KEY);
+            var calendarId = await secureStorage.GetAsync(CALENDAR_ID_KEY);
+
+            var summary = string.Join(", ",
+                $"{COOKIE_KEY}={FormatPresence(cookieString, CountCookieItems(cookieString))}",
+                $"{SESSION_ID_KEY}={FormatPresence(sessionId)}",
+                $"{UID_KEY}={FormatPresence(uid)}",
+                $"{AES_KEY_KEY}={FormatPresence(aesKey)}",
+                $"{AES_IV_KEY}={FormatPresence(aesIv)}",
+                $"{STUDENT_CODE_KEY}={FormatPresence(studentCode)}",
+                $"{CALENDAR_ID_KEY}={FormatPresence(calendarId)}");
+
+            Log($"[TongjiProvider] 凭证摘要: {summary}");
+        }
+
+        private static string FormatPresence(string? value, int cookieItems = 0)
+        {
+            if (string.IsNullOrEmpty(value))
+                return "missing";
+
+            if (cookieItems > 0)
+                return $"present(len={value.Length}, items={cookieItems})";
+
+            return $"present(len={value.Length})";
+        }
+
+        private static int CountCookieItems(string? cookieString)
+        {
+            if (string.IsNullOrWhiteSpace(cookieString))
+                return 0;
+
+            return cookieString
+                .Split(';', StringSplitOptions.RemoveEmptyEntries)
+                .Count(part => part.Contains('='));
+        }
+
         /// <summary>
         /// 从 JSON 顶层安全提取字段值。支持 { "fieldName": "value" } 结构。
         /// </summary>
@@ -321,7 +426,7 @@ namespace wish_drom.Services.DataProviders
         {
             try
             {
-                using var doc = JsonDocument.Parse(json);
+                using var doc = JsonDocument.Parse(NormalizeJsonPayload(json));
                 if (doc.RootElement.TryGetProperty(fieldName, out var prop))
                 {
                     return prop.ValueKind switch
@@ -347,7 +452,7 @@ namespace wish_drom.Services.DataProviders
         {
             try
             {
-                using var doc = JsonDocument.Parse(json);
+                using var doc = JsonDocument.Parse(NormalizeJsonPayload(json));
                 var root = doc.RootElement;
 
                 if (root.TryGetProperty(level1, out var l1) &&
@@ -368,6 +473,55 @@ namespace wish_drom.Services.DataProviders
             }
 
             return null;
+        }
+
+        private static string NormalizeJsonPayload(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return raw;
+
+            var current = raw.Trim();
+
+            // 最多尝试 3 轮解包，覆盖 "{\"k\":\"v\"}"、{\"k\":\"v\"} 等场景。
+            for (int i = 0; i < 3; i++)
+            {
+                var changed = false;
+
+                if (current.Length >= 2 && current.StartsWith('"') && current.EndsWith('"'))
+                {
+                    try
+                    {
+                        var decoded = JsonSerializer.Deserialize<string>(current);
+                        if (!string.IsNullOrEmpty(decoded))
+                        {
+                            current = decoded.Trim();
+                            changed = true;
+                        }
+                    }
+                    catch
+                    {
+                        current = current.Trim('"').Trim();
+                        changed = true;
+                    }
+                }
+
+                if (current.Contains("\\\"", StringComparison.Ordinal))
+                {
+                    current = current.Replace("\\\"", "\"", StringComparison.Ordinal);
+                    changed = true;
+                }
+
+                if (current.Contains("\\/", StringComparison.Ordinal))
+                {
+                    current = current.Replace("\\/", "/", StringComparison.Ordinal);
+                    changed = true;
+                }
+
+                if (!changed)
+                    break;
+            }
+
+            return current;
         }
 
         private static void HandleAuthError(HttpStatusCode statusCode)

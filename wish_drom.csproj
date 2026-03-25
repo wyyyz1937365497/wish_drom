@@ -88,8 +88,8 @@
 
     <!-- Semantic Kernel & AI -->
     <ItemGroup>
-        <PackageReference Include="Microsoft.SemanticKernel" Version="1.35.0" />
-        <PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.35.0" />
+        <PackageReference Include="Microsoft.SemanticKernel" Version="1.74.0" />
+        <PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.74.0" />
     </ItemGroup>
 
     <!-- HTML Parsing -->
