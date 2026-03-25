@@ -123,7 +123,7 @@
             }
 
             <div class="action-buttons">
-                <button class="action-btn secondary" @onclick="@(() => SaveSettings())" @disabled="isSaving">
+                <button class="action-btn secondary" @onclick="@(() => SaveSettings())" disabled="@isSaving">
                     @if (isSaving)
                     {
                         <span class="btn-spinner">⟳</span>
@@ -135,7 +135,7 @@
                     }
                 </button>
 
-                <button class="action-btn primary" @onclick="@(() => TestConnection())" @disabled="(isTesting || string.IsNullOrEmpty(apiKeyInput))">
+                <button class="action-btn primary" @onclick="@(() => TestConnection())" disabled="@(isTesting || string.IsNullOrEmpty(apiKeyInput))">
                     @if (isTesting)
                     {
                         <span class="btn-spinner">⟳</span>

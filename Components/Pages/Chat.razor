@@ -105,8 +105,8 @@
                        @onkeypress="@((e) => HandleKeyPress(e))"
                        @onfocus="@(() => InputFocused())"
                        @onblur="@(() => InputBlurred())"
-                       @disabled="isStreaming">
-                <button class="send-btn" @onclick="@(() => SendMessage())" @disabled="(isStreaming || string.IsNullOrEmpty(inputText))">
+                       disabled="@isStreaming">
+                <button class="send-btn" @onclick="@(() => SendMessage())" disabled="@(isStreaming || string.IsNullOrEmpty(inputText))">
                     <span class="send-icon">@(isStreaming ? "⏳" : "➤")</span>
                 </button>
             </div>
