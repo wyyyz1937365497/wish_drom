@@ -1,7 +1,11 @@
 @page "/sync"
 @using wish_drom.Models
 @using wish_drom.Services.Interfaces
+@using wish_drom.Data
+@using wish_drom.Data.Entities
 @using System.Diagnostics
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
 @inject IDataCaptureService DataCaptureService
 @inject NavigationManager Navigation
 
@@ -75,7 +79,8 @@
                         <div class="success-wrapper">
                             <div class="success-icon">✓</div>
                             <h3 class="status-title">同步成功</h3>
-                            <p class="status-desc">数据已成功提取并保存</p>
+                            <p class="status-desc">成功同步 @syncedCourseCount 门课程</p>
+                            <button class="retry-btn" @onclick="@(() => GoBack())">返回</button>
                         </div>
                     }
                     else if (!string.IsNullOrEmpty(syncError))
@@ -340,6 +345,7 @@
     private bool isSyncing = false;
     private bool syncSuccess = false;
     private string syncError = string.Empty;
+    private int syncedCourseCount = 0;
 
     protected override void OnInitialized()
     {
@@ -347,24 +353,25 @@
         registeredSources = DataCaptureService.GetRegisteredSources();
     }
 
-    private void SelectDataSource(string sourceId)
+    private async void SelectDataSource(string sourceId)
     {
         currentStep = SyncStep.Syncing;
         isSyncing = true;
         syncSuccess = false;
         syncError = string.Empty;
+        syncedCourseCount = 0;
         StateHasChanged();
 
         // 启动数据抓取
-        DataCaptureService.StartCapture(sourceId, (result) =>
+        DataCaptureService.StartCapture(sourceId, async (result) =>
         {
             isSyncing = false;
 
-            if (result.Success)
+            if (result.Success && !string.IsNullOrEmpty(result.JsonData))
             {
+                // 解析并保存数据到数据库
+                syncedCourseCount = await SaveCourseDataAsync(result.JsonData, sourceId);
                 syncSuccess = true;
-                // TODO: 保存 JSON 数据到数据库
-                Debug.WriteLine($"[Sync] 获取到数据: {result.JsonData?.Length ?? 0} 字符");
             }
             else
             {
@@ -373,6 +380,114 @@
 
             StateHasChanged();
         });
+    }
+
+    private async Task<int> SaveCourseDataAsync(string jsonData, string sourceId)
+    {
+        try
+        {
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            // 根据同济大学的 API 响应格式解析
+            var jsonDoc = JsonDocument.Parse(jsonData);
+            var root = jsonDoc.RootElement;
+
+            List<CourseSchedule> courses = new();
+
+            // 尝试解析同济大学课表 API 响应格式
+            if (root.TryGetProperty("data", out var data))
+            {
+                // 同济 API 返回格式: { "data": [ { "kcmc": "高等数学", ... } ] }
+                foreach (var item in data.EnumerateArray())
+                {
+                    var course = new CourseSchedule
+                    {
+                        CourseName = GetStringProp(item, "kcmc") ?? GetStringProp(item, "courseName") ?? "",
+                        Location = GetStringProp(item, "cdmc") ?? GetStringProp(item, "location") ?? "",
+                        Teacher = GetStringProp(item, "jsxm") ?? GetStringProp(item, "teacher") ?? "",
+                        DayOfWeek = GetIntProp(item, "xqj") ?? GetIntProp(item, "dayOfWeek") ?? 1,
+                        StartPeriod = GetIntProp(item, "kcsj") ?? GetIntProp(item, "startPeriod") ?? 1,
+                        EndPeriod = GetIntProp(item, "jcsj") ?? GetIntProp(item, "endPeriod") ?? 2,
+                        StartWeek = GetIntProp(item, "kkz") ?? GetIntProp(item, "startWeek") ?? 1,
+                        EndWeek = GetIntProp(item, "jkz") ?? GetIntProp(item, "endWeek") ?? 16,
+                        Semester = GetStringProp(item, "xnxqmc") ?? GetStringProp(item, "semester") ?? GetCurrentSemester()
+                    };
+
+                    if (!string.IsNullOrEmpty(course.CourseName))
+                    {
+                        courses.Add(course);
+                    }
+                }
+            }
+
+            if (courses.Count == 0)
+            {
+                Debug.WriteLine("[Sync] 未能解析出任何课程数据");
+                return 0;
+            }
+
+            // 保存到数据库
+            var dbContext = new AppDbContext();
+
+            // 清除该学期的旧数据
+            var semester = courses.First().Semester;
+            var oldCourses = await dbContext.CourseSchedules
+                .Where(c => c.Semester == semester)
+                .ToListAsync();
+
+            dbContext.CourseSchedules.RemoveRange(oldCourses);
+
+            // 添加新数据
+            dbContext.CourseSchedules.AddRange(courses);
+            await dbContext.SaveChangesAsync();
+
+            Debug.WriteLine($"[Sync] 成功保存 {courses.Count} 门课程到数据库");
+            return courses.Count;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Sync] 保存数据失败: {ex.Message}");
+            return 0;
+        }
+    }
+
+    private static string? GetStringProp(JsonElement element, string name)
+    {
+        if (element.TryGetProperty(name, out var prop))
+        {
+            return prop.ValueKind == JsonValueKind.String ? prop.GetString() : prop.ToString();
+        }
+        return null;
+    }
+
+    private static int? GetIntProp(JsonElement element, string name)
+    {
+        if (element.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.Number)
+        {
+            return prop.GetInt32();
+        }
+        return null;
+    }
+
+    private static string GetCurrentSemester()
+    {
+        var now = DateTime.Now;
+        var year = now.Year;
+        if (now.Month >= 9)
+        {
+            return $"{year}-{year + 1}-1"; // 第一学期
+        }
+        else if (now.Month >= 2)
+        {
+            return $"{year - 1}-{year}-2"; // 第二学期
+        }
+        else
+        {
+            return $"{year - 1}-{year}-1"; // 第一学期
+        }
     }
 
     private void NavigateBack()
@@ -386,6 +501,7 @@
         isSyncing = false;
         syncSuccess = false;
         syncError = string.Empty;
+        syncedCourseCount = 0;
         StateHasChanged();
     }
 }

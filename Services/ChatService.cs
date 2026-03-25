@@ -5,6 +5,7 @@ using Microsoft.SemanticKernel.Connectors.OpenAI;
 using wish_drom.Data;
 using wish_drom.Data.Entities;
 using wish_drom.Services.Interfaces;
+using wish_drom.Services.Plugins;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
@@ -105,6 +106,9 @@ namespace wish_drom.Services
                 httpClient: httpClient
             );
 
+            // 注册课表插件
+            builder.Plugins.AddFromObject(new SchedulePlugin(_dbContext));
+
             _kernel = builder.Build();
             _chatService = _kernel.GetRequiredService<IChatCompletionService>();
         }
@@ -140,15 +144,26 @@ namespace wish_drom.Services
 2. **准确回答**: 只根据提供的数据回答问题，如果数据不足，明确告知用户
 3. **简洁友好**: 使用学生易懂的语言，避免冗长的回复
 
-## 功能说明
-- 课程管理: 帮助学生查询和管理课程安排
-- 活动查询: 提供校园活动信息
-- 学习建议: 提供学习计划和时间管理建议
+## 可用功能
+你有以下工具可以调用：
+
+### 课表查询
+- 查询今天的课程：获取今天的所有课程安排
+- 查询指定日期的课程：支持【3月25日】、【明天】、【后天】、【下周一】等日期格式
+- 查询日期范围内的课程：如查询本周、下周的课程，使用开始日期和结束日期
+- 查询本周课程：获取本周所有课程概览
+- 查询课程详情：根据课程名称获取详细信息
+- 获取课表统计：获取课表统计数据，包括当前日期、周次、课程数等
+
+## 使用指引
+- 日期参数使用自然语言格式：【今天】、【明天】、【后天】、【周X】、【下周X】、【3月25日】等
+- 当用户问课表相关问题时，调用相应的工具查询
+- 服务会自动处理日期到周次的转换，你只需要传递用户说的日期
+- 如果查询结果显示没有数据，提醒用户先在【数据同步】页面同步课表
+- 返回的结果已经格式化，可以直接展示给用户
 
 ## 回答格式
-使用简洁友好的语言，适当使用emoji让回答更生动。
-
-注意: 课表和活动查询功能需要用户先同步数据。";
+使用简洁友好的语言，适当使用emoji让回答更生动。";
         }
 
         public string StartNewSession()
