@@ -17,6 +17,12 @@ namespace wish_drom.Services
     /// </summary>
     public class ChatService : IChatService
     {
+        private static void Log(string msg)
+        {
+            Debug.WriteLine(msg);
+            Console.WriteLine(msg);
+        }
+
         private readonly AppDbContext _dbContext;
         private Kernel? _kernel;
         private IChatCompletionService? _chatService;
@@ -35,7 +41,14 @@ namespace wish_drom.Services
             _apiKey = await SecureStorage.Default.GetAsync("openai_api_key");
             _baseUrl = await SecureStorage.Default.GetAsync("openai_base_url");
             _modelId = await SecureStorage.Default.GetAsync("openai_model_id") ?? "gpt-4o-mini";
-            return !string.IsNullOrEmpty(_apiKey);
+
+            var configured = !string.IsNullOrWhiteSpace(_apiKey) && !string.IsNullOrWhiteSpace(_baseUrl);
+            if (configured && (_kernel == null || _chatService == null))
+            {
+                InitializeKernel();
+            }
+
+            return configured;
         }
 
         public async Task ConfigureAsync(string baseUrl, string apiKey, string modelId)
@@ -92,7 +105,7 @@ namespace wish_drom.Services
             var builder = Kernel.CreateBuilder();
 
             var normalizedUrl = NormalizeBaseUrl(_baseUrl);
-            Debug.WriteLine($"[ChatService] 初始化 BaseAddress: {normalizedUrl}");
+            Log($"[ChatService] 初始化 BaseAddress: {normalizedUrl}");
 
             // 使用 HttpClient 设置自定义端点
             var httpClient = new HttpClient
@@ -108,6 +121,7 @@ namespace wish_drom.Services
 
             // 注册课表插件
             builder.Plugins.AddFromObject(new SchedulePlugin(_dbContext));
+            Log("[ChatService] 已注册插件: SchedulePlugin");
 
             _kernel = builder.Build();
             _chatService = _kernel.GetRequiredService<IChatCompletionService>();
@@ -154,10 +168,15 @@ namespace wish_drom.Services
 - 查询本周课程：获取本周所有课程概览
 - 查询课程详情：根据课程名称获取详细信息
 - 获取课表统计：获取课表统计数据，包括当前日期、周次、课程数等
+- 通过同济服务查询当天课表：仅在用户明确要求实时同济结果时使用
+- 通过同济服务查询日期范围课表：仅在用户明确要求实时同济结果时使用
 
 ## 使用指引
 - 日期参数使用自然语言格式：【今天】、【明天】、【后天】、【周X】、【下周X】、【3月25日】等
 - 当用户问课表相关问题时，调用相应的工具查询
+- 默认优先使用本地课表数据进行推断，避免频繁调用远程 API
+- 只有当用户明确要求“实时同济接口/在线结果”时，才调用“通过同济服务查询...”工具
+- 如果用户没有明确提“实时/在线/同济接口/官网最新”，禁止调用 get_today_courses_from_tongji 和 get_courses_by_date_range_from_tongji
 - 服务会自动处理日期到周次的转换，你只需要传递用户说的日期
 - 如果查询结果显示没有数据，提醒用户先在【数据同步】页面同步课表
 - 返回的结果已经格式化，可以直接展示给用户
@@ -190,27 +209,39 @@ namespace wish_drom.Services
             // 初始化 session
             if (!_sessionHistory.ContainsKey(sessionId))
             {
-                StartNewSession();
+                var history = new ChatHistory();
+                history.AddSystemMessage(GetSystemPrompt());
+                _sessionHistory[sessionId] = history;
             }
 
             // 添加用户消息
             _sessionHistory[sessionId].AddUserMessage(message);
+            Log($"[ChatService] 用户消息: session={sessionId}, text={message}");
 
             // 保存到数据库
             await SaveMessageAsync(sessionId, "user", message);
 
             // 流式响应
             var fullResponse = new System.Text.StringBuilder();
+            var isScheduleQuery = IsScheduleRelatedQuery(message);
+            var settings = new OpenAIPromptExecutionSettings
+            {
+                MaxTokens = 1000,
+                Temperature = 0.7f,
+                FunctionChoiceBehavior = isScheduleQuery
+                    ? FunctionChoiceBehavior.Required()
+                    : FunctionChoiceBehavior.Auto()
+            };
+
+            Log($"[ChatService] 执行设置: scheduleQuery={isScheduleQuery}, functionChoice={(isScheduleQuery ? "Required" : "Auto")}");
+
             await foreach (var content in _chatService.GetStreamingChatMessageContentsAsync(
                 _sessionHistory[sessionId],
-                executionSettings: new OpenAIPromptExecutionSettings
-                {
-                    MaxTokens = 1000,
-                    Temperature = 0.7f
-                },
+                executionSettings: settings,
                 kernel: _kernel,
                 cancellationToken: cancellationToken))
             {
+                Log($"[ChatService] 流式分片: role={content.Role}, hasContent={!string.IsNullOrEmpty(content.Content)}");
                 if (content.Content != null)
                 {
                     fullResponse.Append(content.Content);
@@ -222,6 +253,28 @@ namespace wish_drom.Services
             var responseText = fullResponse.ToString();
             _sessionHistory[sessionId].AddAssistantMessage(responseText);
             await SaveMessageAsync(sessionId, "assistant", responseText);
+        }
+
+        private static bool IsScheduleRelatedQuery(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) return false;
+
+            var m = message.ToLowerInvariant();
+            return m.Contains("课")
+                || m.Contains("课程")
+                || m.Contains("课表")
+                || m.Contains("今天")
+                || m.Contains("明天")
+                || m.Contains("下周")
+                || m.Contains("周一")
+                || m.Contains("周二")
+                || m.Contains("周三")
+                || m.Contains("周四")
+                || m.Contains("周五")
+                || m.Contains("周六")
+                || m.Contains("周日")
+                || m.Contains("schedule")
+                || m.Contains("course");
         }
 
         public async Task<List<(string Role, string Content)>> GetSessionHistoryAsync(

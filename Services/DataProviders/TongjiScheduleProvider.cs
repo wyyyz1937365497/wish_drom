@@ -31,6 +31,9 @@ namespace wish_drom.Services.DataProviders
         private const string SESSION_ID_KEY = "tongji_session_id";
         private const string STUDENT_CODE_KEY = "tongji_student_code";
         private const string CALENDAR_ID_KEY = "tongji_calendar_id";
+        private const string CALENDAR_BEGIN_DAY_MS_KEY = "tongji_calendar_begin_day_ms";
+        private const string TEACHING_WEEK_START_KEY = "tongji_teaching_week_start";
+        private const string TEACHING_WEEK_END_KEY = "tongji_teaching_week_end";
         private const string AES_KEY_KEY = "tongji_aes_key";
         private const string AES_IV_KEY = "tongji_aes_iv";
         private const string UID_KEY = "tongji_uid";
@@ -203,6 +206,7 @@ namespace wish_drom.Services.DataProviders
                 }
 
                 var content = await response.Content.ReadAsStringAsync();
+                await CacheCalendarMetadataAsync(content, secureStorage);
                 var calendarId = TryExtractNestedField(content, "data", "schoolCalendar", "id");
 
                 if (!string.IsNullOrEmpty(calendarId))
@@ -522,6 +526,41 @@ namespace wish_drom.Services.DataProviders
             }
 
             return current;
+        }
+
+        private static async Task CacheCalendarMetadataAsync(string calendarJson, ISecureDataStorage secureStorage)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(NormalizeJsonPayload(calendarJson));
+                if (!doc.RootElement.TryGetProperty("data", out var data))
+                    return;
+
+                if (!data.TryGetProperty("schoolCalendar", out var schoolCalendar))
+                    return;
+
+                if (schoolCalendar.TryGetProperty("beginDay", out var beginDay) && beginDay.ValueKind == JsonValueKind.Number)
+                {
+                    var beginDayMs = beginDay.GetInt64().ToString();
+                    await secureStorage.SetAsync(CALENDAR_BEGIN_DAY_MS_KEY, beginDayMs);
+                }
+
+                if (schoolCalendar.TryGetProperty("teachingWeekStart", out var teachingWeekStart) && teachingWeekStart.ValueKind == JsonValueKind.Number)
+                {
+                    await secureStorage.SetAsync(TEACHING_WEEK_START_KEY, teachingWeekStart.GetInt32().ToString());
+                }
+
+                if (schoolCalendar.TryGetProperty("teachingWeekEnd", out var teachingWeekEnd) && teachingWeekEnd.ValueKind == JsonValueKind.Number)
+                {
+                    await secureStorage.SetAsync(TEACHING_WEEK_END_KEY, teachingWeekEnd.GetInt32().ToString());
+                }
+
+                Log("[TongjiProvider] 学期元数据已缓存 (beginDay/teachingWeekStart/teachingWeekEnd)");
+            }
+            catch (Exception ex)
+            {
+                Log($"[TongjiProvider] 缓存学期元数据失败: {ex.Message}");
+            }
         }
 
         private static void HandleAuthError(HttpStatusCode statusCode)
