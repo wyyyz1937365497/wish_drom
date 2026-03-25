@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+<Project Sdk="Microsoft.NET.Sdk.Razor">
 
     <PropertyGroup>
         <TargetFrameworks>net10.0-android</TargetFrameworks>
@@ -49,6 +49,7 @@
         <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
         <ValidateXcodeVersion Condition="$([MSBuild]::IsOSPlatform('osx'))">false</ValidateXcodeVersion>
         <MtouchLink Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">SdkOnly</MtouchLink>
+        <UseInterpreter Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst' And '$(Configuration)' == 'Debug'">true</UseInterpreter>
     </PropertyGroup>
 
     <ItemGroup>
@@ -87,8 +88,8 @@
 
     <!-- Semantic Kernel & AI -->
     <ItemGroup>
-        <PackageReference Include="Microsoft.SemanticKernel" Version="1.35.0" />
-        <PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.35.0" />
+        <PackageReference Include="Microsoft.SemanticKernel" Version="1.74.0" />
+        <PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.74.0" />
     </ItemGroup>
 
     <!-- HTML Parsing -->
