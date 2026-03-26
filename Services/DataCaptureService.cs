@@ -14,7 +14,7 @@ namespace wish_drom.Services
     /// </summary>
     public class DataCaptureService : IDataCaptureService
     {
-        private readonly Dictionary<string, DataSourceConfig> _sources = new();
+        private readonly IProviderRegistry _providerRegistry;
         private Action<CaptureResult>? _onResult;
         private WebView? _currentWebView;
         private ContentPage? _webViewPage;
@@ -29,14 +29,15 @@ namespace wish_drom.Services
             Debug.WriteLine(msg);
         }
 
-        public DataCaptureService()
+        public DataCaptureService(IProviderRegistry providerRegistry, ISecureDataStorage secureStorage)
         {
-            _secureStorage = new AppSecureDataStorage();
+            _providerRegistry = providerRegistry;
+            _secureStorage = secureStorage;
         }
 
         public void RegisterProvider(string id, string displayName, string url, IDataProvider provider, string? faviconUrl = null, string? toolDescription = null)
         {
-            _sources[id] = new DataSourceConfig
+            _providerRegistry.Register(new DataSourceConfig
             {
                 Id = id,
                 DisplayName = displayName,
@@ -44,23 +45,24 @@ namespace wish_drom.Services
                 Provider = provider,
                 FaviconUrl = faviconUrl,
                 ToolDescription = toolDescription ?? $"从 {displayName} 获取数据"
-            };
+            });
 
             Log($"[DataCapture] 已注册数据源: {displayName} ({id})");
         }
 
         public List<DataSourceConfig> GetRegisteredSources()
         {
-            return _sources.Values.ToList();
+            return _providerRegistry.GetAll();
         }
 
         public void StartCapture(string sourceId, Action<CaptureResult> onResult)
         {
-            if (!_sources.TryGetValue(sourceId, out var source))
+            if (!_providerRegistry.TryGet(sourceId, out var source) || source == null)
             {
                 onResult(new CaptureResult
                 {
                     Success = false,
+                    SourceId = sourceId,
                     Error = $"未找到数据源: {sourceId}"
                 });
                 return;
@@ -76,12 +78,9 @@ namespace wish_drom.Services
                     var cachedData = await Task.Run(async () => await source.Provider.FetchDataAsync(_secureStorage));
                     if (!string.IsNullOrEmpty(cachedData))
                     {
-                        Log("[DataCapture] 使用缓存凭证静默获取数据成功");
-                        _onResult?.Invoke(new CaptureResult
-                        {
-                            Success = true,
-                            JsonData = cachedData
-                        });
+                        Log("[DataCapture] 使用缓存凭证静默获取数据成功，开始持久化");
+                        var persistResult = await PersistDataAsync(source, cachedData);
+                        _onResult?.Invoke(persistResult);
                         return;
                     }
                 }
@@ -271,35 +270,28 @@ namespace wish_drom.Services
 
                             if (!string.IsNullOrEmpty(businessData))
                             {
-                                Log($"[DataCapture] 数据预览: {businessData[..Math.Min(300, businessData.Length)]}");
-                                tcs.TrySetResult(new CaptureResult
-                                {
-                                    Success = true,
-                                    JsonData = businessData
-                                });
+                                tcs.TrySetResult(await PersistDataAsync(source, businessData));
                             }
                             else
                             {
                                 tcs.TrySetResult(new CaptureResult
                                 {
                                     Success = false,
+                                    SourceId = source.Id,
                                     Error = "凭证已存储但获取数据失败"
                                 });
                             }
                         }
                         else if (!string.IsNullOrEmpty(extractResult))
                         {
-                            tcs.TrySetResult(new CaptureResult
-                            {
-                                Success = true,
-                                JsonData = extractResult
-                            });
+                            tcs.TrySetResult(await PersistDataAsync(source, extractResult));
                         }
                         else
                         {
                             tcs.TrySetResult(new CaptureResult
                             {
                                 Success = false,
+                                SourceId = source.Id,
                                 Error = "数据提取失败"
                             });
                         }
@@ -310,6 +302,7 @@ namespace wish_drom.Services
                         tcs.TrySetResult(new CaptureResult
                         {
                             Success = false,
+                            SourceId = source.Id,
                             Error = ex.Message
                         });
                     }
@@ -320,6 +313,7 @@ namespace wish_drom.Services
                     tcs.TrySetResult(new CaptureResult
                     {
                         Success = false,
+                        SourceId = source.Id,
                         Error = "用户取消"
                     });
                 };
@@ -417,9 +411,35 @@ namespace wish_drom.Services
                 _onResult?.Invoke(new CaptureResult
                 {
                     Success = false,
+                    SourceId = source.Id,
                     Error = ex.Message
                 });
             }
+        }
+
+        private async Task<CaptureResult> PersistDataAsync(DataSourceConfig source, string rawData)
+        {
+            var persistResult = await source.Provider.PersistRawDataAsync(rawData);
+            if (persistResult.Success)
+            {
+                _providerRegistry.SetActiveSource(source.Id);
+                Log($"[DataCapture] 持久化成功: source={source.Id}, saved={persistResult.SavedRecordCount}");
+                return new CaptureResult
+                {
+                    Success = true,
+                    SourceId = source.Id,
+                    SavedRecordCount = persistResult.SavedRecordCount
+                };
+            }
+
+            Log($"[DataCapture] 持久化失败: source={source.Id}, error={persistResult.Error}");
+            return new CaptureResult
+            {
+                Success = false,
+                SourceId = source.Id,
+                SavedRecordCount = persistResult.SavedRecordCount,
+                Error = string.IsNullOrWhiteSpace(persistResult.Error) ? "Provider 持久化失败" : persistResult.Error
+            };
         }
 
         /// <summary>

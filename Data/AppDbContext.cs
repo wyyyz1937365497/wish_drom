@@ -9,8 +9,6 @@ namespace wish_drom.Data
     /// </summary>
     public class AppDbContext : DbContext
     {
-        public DbSet<CourseSchedule> CourseSchedules { get; set; }
-        public DbSet<CampusActivity> CampusActivities { get; set; }
         public DbSet<ChatHistoryRecord> ChatHistoryRecords { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder options)
@@ -22,20 +20,6 @@ namespace wish_drom.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-
-            // 配置 CourseSchedule
-            modelBuilder.Entity<CourseSchedule>(entity =>
-            {
-                entity.HasIndex(e => new { e.DayOfWeek, e.StartPeriod, e.Semester });
-                entity.HasIndex(e => e.Semester);
-            });
-
-            // 配置 CampusActivity
-            modelBuilder.Entity<CampusActivity>(entity =>
-            {
-                entity.HasIndex(e => e.ActivityDate);
-                entity.HasIndex(e => e.Source);
-            });
 
             // 配置 ChatHistoryRecord
             modelBuilder.Entity<ChatHistoryRecord>(entity =>

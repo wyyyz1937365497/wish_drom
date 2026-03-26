@@ -9,6 +9,10 @@
         <!-- When App Sandbox is enabled, this value is required to open outgoing network connections. -->
         <key>com.apple.security.network.client</key>
         <true/>
+        <!-- SecureStorage 依赖 Keychain，缺少该 entitlement 会触发 MissingEntitlement。 -->
+        <key>keychain-access-groups</key>
+        <array>
+            <string>$(AppIdentifierPrefix)com.companyname.wish_drom</string>
+        </array>
     </dict>
 </plist>
-

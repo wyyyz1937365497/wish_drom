@@ -2,9 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.SemanticKernel;
-using wish_drom.Data;
 using wish_drom.Data.Entities;
 using System.Globalization;
 using wish_drom.Services.Interfaces;
@@ -23,7 +21,7 @@ namespace wish_drom.Services.Plugins
             Console.WriteLine(message);
         }
 
-        private readonly AppDbContext _dbContext;
+        private readonly IScheduleDataReader _scheduleDataReader;
         private readonly ISecureDataStorage _secureStorage;
         private readonly ISchoolCalendarService _calendarService;
         private const string API_BASE = "https://1.tongji.edu.cn/workbench";
@@ -32,9 +30,9 @@ namespace wish_drom.Services.Plugins
         private const string COOKIE_KEY = "tongji_cookies";
         private const string SESSION_ID_KEY = "tongji_session_id";
 
-        public SchedulePlugin(AppDbContext dbContext, ISecureDataStorage secureStorage, ISchoolCalendarService calendarService)
+        public SchedulePlugin(IScheduleDataReader scheduleDataReader, ISecureDataStorage secureStorage, ISchoolCalendarService calendarService)
         {
-            _dbContext = dbContext;
+            _scheduleDataReader = scheduleDataReader;
             _secureStorage = secureStorage;
             _calendarService = calendarService;
         }
@@ -279,10 +277,11 @@ namespace wish_drom.Services.Plugins
 
             try
             {
-                var courses = await _dbContext.CourseSchedules
+                var allCourses = await _scheduleDataReader.GetAllCoursesAsync();
+                var courses = allCourses
                     .Where(c => c.DayOfWeek == dayOfWeek && c.StartWeek <= week && c.EndWeek >= week)
                     .OrderBy(c => c.StartPeriod)
-                    .ToListAsync();
+                    .ToList();
 
                 Log($"[SchedulePlugin] 本地日查询结果: date={date:yyyy-MM-dd}, count={courses.Count}");
 
@@ -378,42 +377,48 @@ namespace wish_drom.Services.Plugins
 
             try
             {
-                var courses = await _dbContext.CourseSchedules
-                    .Where(c => c.StartWeek <= endWeek && c.EndWeek >= startWeek)
-                    .OrderBy(c => c.DayOfWeek)
-                    .ThenBy(c => c.StartPeriod)
-                    .ToListAsync();
-                Log($"[SchedulePlugin] 范围查询候选课程数: {courses.Count}");
+                var allCourses = await _scheduleDataReader.GetAllCoursesAsync();
+                var hitList = new List<(DateTime Date, CourseSchedule Course)>();
 
-                // 筛选在日期范围内的课程
-                var filteredCourses = new List<Data.Entities.CourseSchedule>();
-                foreach (var course in courses)
+                for (var day = startDate.Date; day <= endDate.Date; day = day.AddDays(1))
                 {
-                    var courseDate = startDate.AddDays((course.DayOfWeek - 1 - (int)startDate.DayOfWeek + 7) % 7);
-                    var courseWeek = await _calendarService.GetWeekNumberFromDateAsync(courseDate);
-                    if (course.StartWeek <= courseWeek && course.EndWeek >= courseWeek)
+                    var dayOfWeek = (int)day.DayOfWeek;
+                    if (dayOfWeek == 0) dayOfWeek = 7;
+                    var week = await _calendarService.GetWeekNumberFromDateAsync(day);
+
+                    var dayCourses = allCourses
+                        .Where(c => c.DayOfWeek == dayOfWeek && c.StartWeek <= week && c.EndWeek >= week)
+                        .OrderBy(c => c.StartPeriod)
+                        .ToList();
+
+                    foreach (var course in dayCourses)
                     {
-                        filteredCourses.Add(course);
+                        hitList.Add((day, course));
                     }
                 }
 
-                Log($"[SchedulePlugin] 范围查询过滤后课程数: {filteredCourses.Count}");
+                Log($"[SchedulePlugin] 范围查询过滤后课程数: {hitList.Count}");
 
-                if (filteredCourses.Count == 0)
+                if (hitList.Count == 0)
                 {
                     return $"{FormatDate(startDate)} 至 {FormatDate(endDate)} 没有课程安排。";
                 }
 
                 var result = new System.Text.StringBuilder();
-                result.AppendLine($"{FormatDate(startDate)} 至 {FormatDate(endDate)} 共有 {filteredCourses.Count} 门课程：");
+                result.AppendLine($"{FormatDate(startDate)} 至 {FormatDate(endDate)} 共有 {hitList.Count} 门课程：");
                 result.AppendLine();
 
-                var grouped = filteredCourses.GroupBy(c => c.DayOfWeek);
+                var grouped = hitList
+                    .GroupBy(x => x.Date.Date)
+                    .OrderBy(g => g.Key);
                 foreach (var group in grouped)
                 {
-                    result.AppendLine($"【{FormatWeekday(group.Key)}】");
-                    foreach (var course in group)
+                    var dayOfWeek = (int)group.Key.DayOfWeek;
+                    if (dayOfWeek == 0) dayOfWeek = 7;
+                    result.AppendLine($"【{FormatDate(group.Key)} {FormatWeekday(dayOfWeek)}】");
+                    foreach (var item in group.OrderBy(x => x.Course.StartPeriod))
                     {
+                        var course = item.Course;
                         result.AppendLine($"  📚 {course.CourseName}");
                         result.AppendLine($"     📍 {course.Location} | ⏰ {FormatPeriodTime(course.StartPeriod, course.EndPeriod)}");
                     }
@@ -529,11 +534,11 @@ namespace wish_drom.Services.Plugins
             try
             {
                 Log($"[SchedulePlugin] 课程详情查询: keyword='{courseName}'");
-                var courses = await _dbContext.CourseSchedules
-                    .Where(c => c.CourseName.Contains(courseName))
+                var courses = await _scheduleDataReader.SearchCoursesAsync(courseName);
+                courses = courses
                     .OrderBy(c => c.DayOfWeek)
                     .ThenBy(c => c.StartPeriod)
-                    .ToListAsync();
+                    .ToList();
                 Log($"[SchedulePlugin] 课程详情查询结果数: {courses.Count}");
 
                 if (courses.Count == 0)
@@ -577,7 +582,8 @@ namespace wish_drom.Services.Plugins
         {
             try
             {
-                var totalCourses = await _dbContext.CourseSchedules.CountAsync();
+                var allCourses = await _scheduleDataReader.GetAllCoursesAsync();
+                var totalCourses = allCourses.Count;
 
                 if (totalCourses == 0)
                 {
@@ -587,16 +593,14 @@ namespace wish_drom.Services.Plugins
                 var today = DateTime.Today;
                 var currentWeek = await _calendarService.GetWeekNumberFromDateAsync(today);
 
-                var thisWeekCourses = await _dbContext.CourseSchedules
-                    .Where(c => c.StartWeek <= currentWeek && c.EndWeek >= currentWeek)
-                    .CountAsync();
+                var thisWeekCourses = allCourses
+                    .Count(c => c.StartWeek <= currentWeek && c.EndWeek >= currentWeek);
 
                 var todayDayOfWeek = (int)today.DayOfWeek;
                 if (todayDayOfWeek == 0) todayDayOfWeek = 7;
 
-                var todayCourses = await _dbContext.CourseSchedules
-                    .Where(c => c.DayOfWeek == todayDayOfWeek && c.StartWeek <= currentWeek && c.EndWeek >= currentWeek)
-                    .CountAsync();
+                var todayCourses = allCourses
+                    .Count(c => c.DayOfWeek == todayDayOfWeek && c.StartWeek <= currentWeek && c.EndWeek >= currentWeek);
 
                 var result = new System.Text.StringBuilder();
                 result.AppendLine("📊 课表统计：");

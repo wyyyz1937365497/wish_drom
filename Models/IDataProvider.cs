@@ -3,6 +3,18 @@ using wish_drom.Services.Interfaces;
 namespace wish_drom.Models
 {
     /// <summary>
+    /// 原始数据持久化结果
+    /// </summary>
+    public class PersistResult
+    {
+        public bool Success { get; set; }
+
+        public int SavedRecordCount { get; set; }
+
+        public string? Error { get; set; }
+    }
+
+    /// <summary>
     /// 数据提供者接口 - 支持 WebView 凭证提取 + 原生 API 请求双模式
     /// </summary>
     public interface IDataProvider
@@ -55,5 +67,10 @@ namespace wish_drom.Models
         {
             return Task.FromResult<string?>(rawData);
         }
+
+        /// <summary>
+        /// 将原始 JSON 持久化到 Provider 私有存储
+        /// </summary>
+        Task<PersistResult> PersistRawDataAsync(string rawData);
     }
 }

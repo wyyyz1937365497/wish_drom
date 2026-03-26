@@ -3,7 +3,10 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using wish_drom.Models;
+using wish_drom.Data.Entities;
 using wish_drom.Services.Interfaces;
 
 namespace wish_drom.Services.DataProviders
@@ -13,8 +16,15 @@ namespace wish_drom.Services.DataProviders
     /// 基于 1.tongji.edu.cn 统一门户，通过 WebView 登录获取凭证，再使用原生 HTTP 请求获取课表数据。
     /// 加密算法逆向自前端 webpack 模块 hpw7：AES-CBC-PKCS7，密钥经 paramHandler 字符交换处理。
     /// </summary>
-    public class TongjiScheduleProvider : IDataProvider
+    public class TongjiScheduleProvider : IDataProvider, IScheduleDataStore
     {
+        private readonly TongjiScheduleDbContext _dbContext;
+
+        public TongjiScheduleProvider(TongjiScheduleDbContext dbContext)
+        {
+            _dbContext = dbContext;
+        }
+
         private static void Log(string msg)
         {
             Console.WriteLine(msg);
@@ -169,6 +179,57 @@ namespace wish_drom.Services.DataProviders
             Log($"[TongjiProvider] 课表数据获取成功 ({content.Length} 字符)");
 
             return content;
+        }
+
+        public async Task<PersistResult> PersistRawDataAsync(string rawData)
+        {
+            try
+            {
+                var courses = ParseSchedulesFromRawData(rawData);
+                await ReplaceSchedulesAsync(courses);
+
+                Log($"[TongjiProvider] 持久化完成，记录数: {courses.Count}");
+                return new PersistResult
+                {
+                    Success = true,
+                    SavedRecordCount = courses.Count
+                };
+            }
+            catch (Exception ex)
+            {
+                Log($"[TongjiProvider] PersistRawDataAsync 异常: {ex}");
+                return new PersistResult
+                {
+                    Success = false,
+                    SavedRecordCount = 0,
+                    Error = $"课表入库失败: {ex.Message}"
+                };
+            }
+        }
+
+        public async Task<List<CourseSchedule>> GetAllSchedulesAsync(CancellationToken cancellationToken = default)
+        {
+            return await _dbContext.CourseSchedules
+                .AsNoTracking()
+                .OrderBy(c => c.DayOfWeek)
+                .ThenBy(c => c.StartPeriod)
+                .ThenBy(c => c.CourseName)
+                .ToListAsync(cancellationToken);
+        }
+
+        public async Task<List<CourseSchedule>> SearchSchedulesAsync(string keyword, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(keyword))
+            {
+                return await GetAllSchedulesAsync(cancellationToken);
+            }
+
+            return await _dbContext.CourseSchedules
+                .AsNoTracking()
+                .Where(c => c.CourseName.Contains(keyword))
+                .OrderBy(c => c.DayOfWeek)
+                .ThenBy(c => c.StartPeriod)
+                .ToListAsync(cancellationToken);
         }
 
         /// <summary>
@@ -561,6 +622,293 @@ namespace wish_drom.Services.DataProviders
             {
                 Log($"[TongjiProvider] 缓存学期元数据失败: {ex.Message}");
             }
+        }
+
+        private async Task ReplaceSchedulesAsync(List<CourseSchedule> courses)
+        {
+            var oldRecords = await _dbContext.CourseSchedules.ToListAsync();
+            _dbContext.CourseSchedules.RemoveRange(oldRecords);
+            if (courses.Count > 0)
+            {
+                await _dbContext.CourseSchedules.AddRangeAsync(courses);
+            }
+
+            await _dbContext.SaveChangesAsync();
+        }
+
+        private static List<CourseSchedule> ParseSchedulesFromRawData(string rawData)
+        {
+            var result = new List<CourseSchedule>();
+            var dedup = new HashSet<string>(StringComparer.Ordinal);
+
+            using var document = JsonDocument.Parse(rawData);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("data", out var dataArray) || dataArray.ValueKind != JsonValueKind.Array)
+            {
+                return result;
+            }
+
+            var now = DateTime.Now;
+
+            foreach (var item in dataArray.EnumerateArray())
+            {
+                var courseName = GetString(item, "courseName");
+                if (string.IsNullOrWhiteSpace(courseName))
+                {
+                    continue;
+                }
+
+                var semester = GetString(item, "xnxqmc");
+                if (string.IsNullOrWhiteSpace(semester))
+                {
+                    semester = GetCurrentSemester();
+                }
+
+                var itemTeacher = NormalizeTeacherName(GetString(item, "teacherName"));
+                var itemLocation = FirstNonEmpty(
+                        GetString(item, "classRoomI18n"),
+                        GetString(item, "roomLable"),
+                        GetString(item, "classRoomName"),
+                        GetString(item, "classRoom"))
+                    ?? string.Empty;
+
+                if (item.TryGetProperty("timeTableList", out var timeTableList) && timeTableList.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var timeEntry in timeTableList.EnumerateArray())
+                    {
+                        var dayOfWeek = Math.Clamp(GetInt(timeEntry, "dayOfWeek") ?? 1, 1, 7);
+                        var startPeriod = Math.Clamp(GetInt(timeEntry, "timeStart") ?? 1, 1, 14);
+                        var endPeriod = Math.Clamp(GetInt(timeEntry, "timeEnd") ?? startPeriod, 1, 14);
+                        if (endPeriod < startPeriod)
+                        {
+                            endPeriod = startPeriod;
+                        }
+
+                        var teacher = NormalizeTeacherName(GetString(timeEntry, "teacherName")) ?? itemTeacher ?? string.Empty;
+                        var location = FirstNonEmpty(
+                            GetString(timeEntry, "roomIdI18n"),
+                            GetString(timeEntry, "roomLable"),
+                            GetString(item, "classRoomI18n"),
+                            GetString(item, "roomLable"),
+                            itemLocation);
+
+                        var weekNumText = GetString(timeEntry, "weekNum");
+                        var weeks = ExtractWeeks(timeEntry, weekNumText);
+                        if (weeks.Count == 0)
+                        {
+                            weeks = Enumerable.Range(1, 16).ToList();
+                        }
+
+                        foreach (var week in weeks)
+                        {
+                            var course = new CourseSchedule
+                            {
+                                CourseName = courseName,
+                                Location = location ?? string.Empty,
+                                Teacher = teacher,
+                                DayOfWeek = dayOfWeek,
+                                StartPeriod = startPeriod,
+                                EndPeriod = endPeriod,
+                                StartWeek = week,
+                                EndWeek = week,
+                                WeekType = weekNumText,
+                                Semester = semester!,
+                                SyncTime = now
+                            };
+
+                            var key = BuildDedupKey(course);
+                            if (dedup.Add(key))
+                            {
+                                result.Add(course);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static string BuildDedupKey(CourseSchedule course)
+        {
+            return string.Join("|",
+                course.CourseName,
+                course.DayOfWeek,
+                course.StartPeriod,
+                course.EndPeriod,
+                course.StartWeek,
+                course.Location,
+                course.Teacher,
+                course.Semester);
+        }
+
+        private static List<int> ExtractWeeks(JsonElement timeEntry, string? weekNumText)
+        {
+            var weeks = new List<int>();
+
+            if (timeEntry.TryGetProperty("weeks", out var weeksNode) && weeksNode.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var weekItem in weeksNode.EnumerateArray())
+                {
+                    if (weekItem.ValueKind == JsonValueKind.Number)
+                    {
+                        var week = weekItem.GetInt32();
+                        if (week >= 1)
+                        {
+                            weeks.Add(week);
+                        }
+                    }
+                }
+            }
+
+            if (weeks.Count > 0)
+            {
+                return weeks.Distinct().OrderBy(x => x).ToList();
+            }
+
+            if (!string.IsNullOrWhiteSpace(weekNumText))
+            {
+                return ParseWeekNum(weekNumText);
+            }
+
+            return weeks;
+        }
+
+        private static List<int> ParseWeekNum(string weekNumText)
+        {
+            var result = new SortedSet<int>();
+            var normalized = weekNumText.Trim().TrimStart('[').TrimEnd(']');
+
+            foreach (var rawPart in normalized.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var part = rawPart.Trim();
+                var isOddOnly = part.EndsWith("单", StringComparison.OrdinalIgnoreCase);
+                var isEvenOnly = part.EndsWith("双", StringComparison.OrdinalIgnoreCase);
+                var cleanedPart = part.Replace("单", "", StringComparison.OrdinalIgnoreCase)
+                    .Replace("双", "", StringComparison.OrdinalIgnoreCase)
+                    .Trim();
+
+                if (cleanedPart.Contains('-'))
+                {
+                    var parts = cleanedPart.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length == 2
+                        && int.TryParse(parts[0], out var start)
+                        && int.TryParse(parts[1], out var end))
+                    {
+                        for (var week = start; week <= end; week++)
+                        {
+                            if (week < 1)
+                            {
+                                continue;
+                            }
+
+                            if (isOddOnly && week % 2 == 0)
+                            {
+                                continue;
+                            }
+
+                            if (isEvenOnly && week % 2 != 0)
+                            {
+                                continue;
+                            }
+
+                            result.Add(week);
+                        }
+                    }
+                }
+                else if (int.TryParse(cleanedPart, out var week))
+                {
+                    if (week >= 1)
+                    {
+                        if ((!isOddOnly || week % 2 == 1) && (!isEvenOnly || week % 2 == 0))
+                        {
+                            result.Add(week);
+                        }
+                    }
+                }
+            }
+
+            return result.ToList();
+        }
+
+        private static string? NormalizeTeacherName(string? rawTeacherName)
+        {
+            if (string.IsNullOrWhiteSpace(rawTeacherName))
+            {
+                return null;
+            }
+
+            var normalizedSource = rawTeacherName.Replace('，', ',');
+            var parts = normalizedSource
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(name => Regex.Replace(name, @"\([^)]*\)", "").Trim())
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct()
+                .ToList();
+
+            return parts.Count == 0 ? null : string.Join(",", parts);
+        }
+
+        private static string? GetString(JsonElement element, string propertyName)
+        {
+            if (!element.TryGetProperty(propertyName, out var value))
+            {
+                return null;
+            }
+
+            return value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString(),
+                JsonValueKind.Number => value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => value.ToString()
+            };
+        }
+
+        private static int? GetInt(JsonElement element, string propertyName)
+        {
+            if (!element.TryGetProperty(propertyName, out var value))
+            {
+                return null;
+            }
+
+            if (value.ValueKind == JsonValueKind.Number)
+            {
+                return value.GetInt32();
+            }
+
+            if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out var parsed))
+            {
+                return parsed;
+            }
+
+            return null;
+        }
+
+        private static string? FirstNonEmpty(params string?[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value.Trim();
+                }
+            }
+
+            return null;
+        }
+
+        private static string GetCurrentSemester()
+        {
+            var now = DateTime.Now;
+            var year = now.Year;
+            if (now.Month >= 9)
+            {
+                return $"{year}-{year + 1}第一学期";
+            }
+
+            return $"{year - 1}-{year}第二学期";
         }
 
         private static void HandleAuthError(HttpStatusCode statusCode)

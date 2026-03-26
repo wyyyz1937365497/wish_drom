@@ -11,9 +11,14 @@ namespace wish_drom.Services.Interfaces
         public bool Success { get; set; }
 
         /// <summary>
-        /// JSON 数据
+        /// 保存记录数
         /// </summary>
-        public string? JsonData { get; set; }
+        public int SavedRecordCount { get; set; }
+
+        /// <summary>
+        /// 数据源 ID
+        /// </summary>
+        public string? SourceId { get; set; }
 
         /// <summary>
         /// 错误信息

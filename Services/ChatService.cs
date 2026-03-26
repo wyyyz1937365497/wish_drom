@@ -25,6 +25,7 @@ namespace wish_drom.Services
         }
 
         private readonly AppDbContext _dbContext;
+        private readonly IScheduleDataReader _scheduleDataReader;
         private readonly ISecureDataStorage _secureStorage;
         private readonly ISchoolCalendarService _calendarService;
         private Kernel? _kernel;
@@ -34,9 +35,14 @@ namespace wish_drom.Services
         private string? _modelId;
         private readonly Dictionary<string, ChatHistory> _sessionHistory = new();
 
-        public ChatService(AppDbContext dbContext, ISecureDataStorage secureStorage, ISchoolCalendarService calendarService)
+        public ChatService(
+            AppDbContext dbContext,
+            IScheduleDataReader scheduleDataReader,
+            ISecureDataStorage secureStorage,
+            ISchoolCalendarService calendarService)
         {
             _dbContext = dbContext;
+            _scheduleDataReader = scheduleDataReader;
             _secureStorage = secureStorage;
             _calendarService = calendarService;
         }
@@ -125,7 +131,7 @@ namespace wish_drom.Services
             );
 
             // 注册课表插件
-            builder.Plugins.AddFromObject(new SchedulePlugin(_dbContext, _secureStorage, _calendarService));
+            builder.Plugins.AddFromObject(new SchedulePlugin(_scheduleDataReader, _secureStorage, _calendarService));
             Log("[ChatService] 已注册插件: SchedulePlugin");
 
             _kernel = builder.Build();

@@ -1,8 +1,7 @@
 @page "/schedule-db-debug"
-@using Microsoft.EntityFrameworkCore
-@using wish_drom.Data
 @using wish_drom.Data.Entities
-@inject AppDbContext DbContext
+@using wish_drom.Services.Interfaces
+@inject IScheduleDataReader ScheduleDataReader
 @inject NavigationManager Navigation
 
 <div class="db-debug-page">
@@ -201,12 +200,12 @@
         isLoading = true;
         StateHasChanged();
 
-        allCourses = await DbContext.CourseSchedules
-            .AsNoTracking()
+        allCourses = await ScheduleDataReader.GetAllCoursesAsync();
+        allCourses = allCourses
             .OrderBy(c => c.DayOfWeek)
             .ThenBy(c => c.StartPeriod)
             .ThenBy(c => c.CourseName)
-            .ToListAsync();
+            .ToList();
 
         previewCourses = allCourses.Take(200).ToList();
 

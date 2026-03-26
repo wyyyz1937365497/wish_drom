@@ -34,6 +34,11 @@ namespace wish_drom
                 return dbContext;
             });
 
+            // Provider 路由与注册中心
+            builder.Services.AddSingleton<IProviderRegistry, ProviderRegistry>();
+            builder.Services.AddSingleton<IScheduleDataReader, ScheduleDataReader>();
+            builder.Services.AddSingleton<IActivityDataReader, ActivityDataReader>();
+
             // 安全存储服务
             builder.Services.AddSingleton<ISecureDataStorage, AppSecureDataStorage>();
 
@@ -43,11 +48,23 @@ namespace wish_drom
             // 课表服务
             builder.Services.AddSingleton<IScheduleService, ScheduleService>();
 
+            // 活动服务
+            builder.Services.AddSingleton<IActivityService, ActivityService>();
+
             // 聊天服务
             builder.Services.AddSingleton<IChatService, ChatService>();
 
             // 数据抓取服务
             builder.Services.AddSingleton<IDataCaptureService, DataCaptureService>();
+
+            // 同济课表 Provider 私有数据库与实现
+            builder.Services.AddSingleton<TongjiScheduleDbContext>(sp =>
+            {
+                var dbContext = new TongjiScheduleDbContext();
+                dbContext.Database.EnsureCreated();
+                return dbContext;
+            });
+            builder.Services.AddSingleton<TongjiScheduleProvider>();
 
             var app = builder.Build();
 
@@ -58,7 +75,7 @@ namespace wish_drom
                 id: "tongji-schedule",
                 displayName: "同济大学课表",
                 url: "https://1.tongji.edu.cn/workbench",
-                provider: new TongjiScheduleProvider(),
+                provider: app.Services.GetRequiredService<TongjiScheduleProvider>(),
                 faviconUrl: "https://1.tongji.edu.cn/favicon.ico",
                 toolDescription: "查询同济大学课程表"
             );
