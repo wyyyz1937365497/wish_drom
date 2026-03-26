@@ -1,5 +1,4 @@
 @page "/settings"
-@using Microsoft.Maui.Storage
 @inject IChatService ChatService
 @inject NavigationManager Navigation
 
@@ -765,17 +764,14 @@
 
     protected override async Task OnInitializedAsync()
     {
-        isConfigured = await ChatService.IsConfiguredAsync();
+        var config = await ChatService.GetConfigAsync();
+        isConfigured = !string.IsNullOrWhiteSpace(config.ApiKey) && !string.IsNullOrWhiteSpace(config.BaseUrl);
 
         if (isConfigured)
         {
-            var existingKey = await SecureStorage.Default.GetAsync("openai_api_key");
-            var existingUrl = await SecureStorage.Default.GetAsync("openai_base_url");
-            var existingModel = await SecureStorage.Default.GetAsync("openai_model_id");
-
-            apiKeyInput = existingKey ?? string.Empty;
-            baseUrlInput = existingUrl ?? "https://api.openai.com";
-            modelIdInput = existingModel ?? "gpt-4o-mini";
+            apiKeyInput = config.ApiKey ?? string.Empty;
+            baseUrlInput = config.BaseUrl ?? "https://api.openai.com";
+            modelIdInput = config.ModelId ?? "gpt-4o-mini";
         }
 
         await LoadDataStats();
@@ -939,16 +935,13 @@
 
     private async Task ClearSettings()
     {
-        SecureStorage.Default.Remove("openai_api_key");
-        SecureStorage.Default.Remove("openai_base_url");
-        SecureStorage.Default.Remove("openai_model_id");
+        await ChatService.ClearConfigAsync();
         apiKeyInput = string.Empty;
         baseUrlInput = "https://api.openai.com";
         modelIdInput = "gpt-4o-mini";
         isConfigured = false;
         saveMessage = ("success", "配置已清除");
         StateHasChanged();
-        await Task.CompletedTask;
     }
 
     private void NavigateBack()

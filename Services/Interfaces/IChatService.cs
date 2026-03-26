@@ -55,6 +55,16 @@ namespace wish_drom.Services.Interfaces
         Task TestConnectionAsync(string baseUrl, string apiKey, string modelId);
 
         /// <summary>
+        /// 读取当前配置
+        /// </summary>
+        Task<(string? BaseUrl, string? ApiKey, string? ModelId)> GetConfigAsync();
+
+        /// <summary>
+        /// 清除 API 配置
+        /// </summary>
+        Task ClearConfigAsync();
+
+        /// <summary>
         /// 清除当前会话上下文
         /// </summary>
         Task ClearSessionAsync(string sessionId);

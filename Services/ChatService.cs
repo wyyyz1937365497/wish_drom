@@ -1,4 +1,3 @@
-using Microsoft.Maui.Storage;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
@@ -49,9 +48,9 @@ namespace wish_drom.Services
 
         public async Task<bool> IsConfiguredAsync()
         {
-            _apiKey = await SecureStorage.Default.GetAsync("openai_api_key");
-            _baseUrl = await SecureStorage.Default.GetAsync("openai_base_url");
-            _modelId = await SecureStorage.Default.GetAsync("openai_model_id") ?? "gpt-4o-mini";
+            _apiKey = await _secureStorage.GetAsync("openai_api_key");
+            _baseUrl = await _secureStorage.GetAsync("openai_base_url");
+            _modelId = await _secureStorage.GetAsync("openai_model_id") ?? "gpt-4o-mini";
 
             var configured = !string.IsNullOrWhiteSpace(_apiKey) && !string.IsNullOrWhiteSpace(_baseUrl);
             if (configured && (_kernel == null || _chatService == null))
@@ -64,15 +63,36 @@ namespace wish_drom.Services
 
         public async Task ConfigureAsync(string baseUrl, string apiKey, string modelId)
         {
-            await SecureStorage.Default.SetAsync("openai_base_url", baseUrl);
-            await SecureStorage.Default.SetAsync("openai_api_key", apiKey);
-            await SecureStorage.Default.SetAsync("openai_model_id", modelId);
+            await _secureStorage.SetAsync("openai_base_url", baseUrl);
+            await _secureStorage.SetAsync("openai_api_key", apiKey);
+            await _secureStorage.SetAsync("openai_model_id", modelId);
 
             _baseUrl = baseUrl;
             _apiKey = apiKey;
             _modelId = modelId;
 
             InitializeKernel();
+        }
+
+        public async Task<(string? BaseUrl, string? ApiKey, string? ModelId)> GetConfigAsync()
+        {
+            var baseUrl = await _secureStorage.GetAsync("openai_base_url");
+            var apiKey = await _secureStorage.GetAsync("openai_api_key");
+            var modelId = await _secureStorage.GetAsync("openai_model_id");
+            return (baseUrl, apiKey, modelId);
+        }
+
+        public async Task ClearConfigAsync()
+        {
+            await _secureStorage.RemoveAsync("openai_api_key");
+            await _secureStorage.RemoveAsync("openai_base_url");
+            await _secureStorage.RemoveAsync("openai_model_id");
+
+            _apiKey = null;
+            _baseUrl = null;
+            _modelId = null;
+            _kernel = null;
+            _chatService = null;
         }
 
         public async Task TestConnectionAsync(string baseUrl, string apiKey, string modelId)
