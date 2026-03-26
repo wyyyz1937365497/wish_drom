@@ -51,11 +51,11 @@ namespace wish_drom.Services.Interfaces
         /// <summary>
         /// 获取当前周次
         /// </summary>
-        int GetCurrentWeekNumber();
+        Task<int> GetCurrentWeekNumberAsync();
 
         /// <summary>
         /// 根据日期获取周次
         /// </summary>
-        int GetWeekNumberFromDate(DateTime date);
+        Task<int> GetWeekNumberFromDateAsync(DateTime date);
     }
 }

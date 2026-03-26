@@ -44,9 +44,9 @@ namespace wish_drom.Plugins
 
         [KernelFunction("get_current_week")]
         [Description("获取当前是第几周")]
-        public string GetCurrentWeek()
+        public async Task<string> GetCurrentWeek()
         {
-            var week = _scheduleService.GetCurrentWeekNumber();
+            var week = await _scheduleService.GetCurrentWeekNumberAsync();
             return $"当前是第 {week} 周";
         }
 

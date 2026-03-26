@@ -34,6 +34,15 @@ namespace wish_drom
                 return dbContext;
             });
 
+            // 安全存储服务
+            builder.Services.AddSingleton<ISecureDataStorage, AppSecureDataStorage>();
+
+            // 校历服务
+            builder.Services.AddSingleton<ISchoolCalendarService, SchoolCalendarService>();
+
+            // 课表服务
+            builder.Services.AddSingleton<IScheduleService, ScheduleService>();
+
             // 聊天服务
             builder.Services.AddSingleton<IChatService, ChatService>();
 

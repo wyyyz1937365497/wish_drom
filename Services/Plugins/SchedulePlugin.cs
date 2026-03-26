@@ -25,75 +25,21 @@ namespace wish_drom.Services.Plugins
 
         private readonly AppDbContext _dbContext;
         private readonly ISecureDataStorage _secureStorage;
-        private static readonly DateTime _semesterStart = new DateTime(2024, 9, 2); // 秋季学期开学日期
+        private readonly ISchoolCalendarService _calendarService;
         private const string API_BASE = "https://1.tongji.edu.cn/workbench";
         private const string ATTEND_CLASS_API_PATH = "/api/electionservice/reportManagement/queryAttendClassContent";
 
         private const string COOKIE_KEY = "tongji_cookies";
         private const string SESSION_ID_KEY = "tongji_session_id";
-        private const string CALENDAR_BEGIN_DAY_MS_KEY = "tongji_calendar_begin_day_ms";
-        private const string TEACHING_WEEK_START_KEY = "tongji_teaching_week_start";
-        private const string TEACHING_WEEK_END_KEY = "tongji_teaching_week_end";
 
-        public SchedulePlugin(AppDbContext dbContext)
+        public SchedulePlugin(AppDbContext dbContext, ISecureDataStorage secureStorage, ISchoolCalendarService calendarService)
         {
             _dbContext = dbContext;
-            _secureStorage = new AppSecureDataStorage();
+            _secureStorage = secureStorage;
+            _calendarService = calendarService;
         }
 
         #region 私有辅助方法
-
-        /// <summary>
-        /// 获取指定日期的周次（优先使用同济学期元数据，失败时回退到本地默认）
-        /// </summary>
-        private async Task<int> GetWeekAsync(DateTime date)
-        {
-            try
-            {
-                var beginDayMsRaw = await _secureStorage.GetAsync(CALENDAR_BEGIN_DAY_MS_KEY);
-                var teachingWeekStartRaw = await _secureStorage.GetAsync(TEACHING_WEEK_START_KEY);
-                var teachingWeekEndRaw = await _secureStorage.GetAsync(TEACHING_WEEK_END_KEY);
-
-                if (long.TryParse(beginDayMsRaw, out var beginDayMs))
-                {
-                    var beginDate = DateTimeOffset.FromUnixTimeMilliseconds(beginDayMs).LocalDateTime.Date;
-                    var teachingWeekStart = int.TryParse(teachingWeekStartRaw, out var startWeek) ? startWeek : 1;
-                    var teachingWeekEnd = int.TryParse(teachingWeekEndRaw, out var endWeek) ? endWeek : 20;
-
-                    var offsetWeeks = (int)Math.Floor((date.Date - beginDate).TotalDays / 7.0);
-                    var week = teachingWeekStart + offsetWeeks;
-                    Log($"[SchedulePlugin] 周次计算(元数据): date={date:yyyy-MM-dd}, begin={beginDate:yyyy-MM-dd}, startWeek={teachingWeekStart}, endWeek={teachingWeekEnd}, result={week}");
-                    return Math.Clamp(week, 1, Math.Max(teachingWeekEnd, 20));
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"[SchedulePlugin] 读取学期元数据失败，回退默认算法: {ex.Message}");
-            }
-
-            var days = (date - _semesterStart).Days;
-            var fallbackWeek = Math.Max(1, (days / 7) + 1);
-            Log($"[SchedulePlugin] 周次计算(回退): date={date:yyyy-MM-dd}, semesterStart={_semesterStart:yyyy-MM-dd}, result={fallbackWeek}");
-            return fallbackWeek;
-        }
-
-        private async Task<DateTime?> TryGetSemesterStartDateAsync()
-        {
-            try
-            {
-                var beginDayMsRaw = await _secureStorage.GetAsync(CALENDAR_BEGIN_DAY_MS_KEY);
-                if (long.TryParse(beginDayMsRaw, out var beginDayMs))
-                {
-                    return DateTimeOffset.FromUnixTimeMilliseconds(beginDayMs).LocalDateTime.Date;
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"[SchedulePlugin] 读取学期开始日期失败: {ex.Message}");
-            }
-
-            return null;
-        }
 
         private async Task<HttpClient?> CreateTongjiHttpClientAsync()
         {
@@ -328,7 +274,7 @@ namespace wish_drom.Services.Plugins
             var dayOfWeek = (int)date.DayOfWeek;
             if (dayOfWeek == 0) dayOfWeek = 7;
 
-            var week = await GetWeekAsync(date);
+            var week = await _calendarService.GetWeekNumberFromDateAsync(date);
             Log($"[SchedulePlugin] 本地日查询开始: date={date:yyyy-MM-dd}, dayOfWeek={dayOfWeek}, week={week}");
 
             try
@@ -426,8 +372,8 @@ namespace wish_drom.Services.Plugins
                 return $"开始日期不能晚于结束日期。";
             }
 
-            var startWeek = await GetWeekAsync(startDate);
-            var endWeek = await GetWeekAsync(endDate);
+            var startWeek = await _calendarService.GetWeekNumberFromDateAsync(startDate);
+            var endWeek = await _calendarService.GetWeekNumberFromDateAsync(endDate);
             Log($"[SchedulePlugin] 范围查询周次: startWeek={startWeek}, endWeek={endWeek}");
 
             try
@@ -444,7 +390,7 @@ namespace wish_drom.Services.Plugins
                 foreach (var course in courses)
                 {
                     var courseDate = startDate.AddDays((course.DayOfWeek - 1 - (int)startDate.DayOfWeek + 7) % 7);
-                    var courseWeek = await GetWeekAsync(courseDate);
+                    var courseWeek = await _calendarService.GetWeekNumberFromDateAsync(courseDate);
                     if (course.StartWeek <= courseWeek && course.EndWeek >= courseWeek)
                     {
                         filteredCourses.Add(course);
@@ -639,7 +585,7 @@ namespace wish_drom.Services.Plugins
                 }
 
                 var today = DateTime.Today;
-                var currentWeek = await GetWeekAsync(today);
+                var currentWeek = await _calendarService.GetWeekNumberFromDateAsync(today);
 
                 var thisWeekCourses = await _dbContext.CourseSchedules
                     .Where(c => c.StartWeek <= currentWeek && c.EndWeek >= currentWeek)
@@ -654,8 +600,9 @@ namespace wish_drom.Services.Plugins
 
                 var result = new System.Text.StringBuilder();
                 result.AppendLine("📊 课表统计：");
-                var semesterStartDate = await TryGetSemesterStartDateAsync() ?? _semesterStart;
-                result.AppendLine($"   学期开始: {semesterStartDate:yyyy年M月d日}");
+                var semesterStartDate = await _calendarService.GetSemesterStartDateAsync();
+                var displayStartDate = semesterStartDate ?? new DateTime(2024, 9, 2);
+                result.AppendLine($"   学期开始: {displayStartDate:yyyy年M月d日}");
                 result.AppendLine($"   当前日期: {FormatDate(today)} ({FormatWeekday(todayDayOfWeek)})");
                 result.AppendLine($"   当前周次: 第 {currentWeek} 周");
                 result.AppendLine($"   总课程数: {totalCourses} 门");

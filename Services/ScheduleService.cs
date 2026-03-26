@@ -12,10 +12,12 @@ namespace wish_drom.Services
     public class ScheduleService : IScheduleService
     {
         private readonly AppDbContext _dbContext;
+        private readonly ISchoolCalendarService _calendarService;
 
-        public ScheduleService(AppDbContext dbContext)
+        public ScheduleService(AppDbContext dbContext, ISchoolCalendarService calendarService)
         {
             _dbContext = dbContext;
+            _calendarService = calendarService;
         }
 
         public async Task<List<CourseSchedule>> GetTodayScheduleAsync(CancellationToken cancellationToken = default)
@@ -30,7 +32,7 @@ namespace wish_drom.Services
         public async Task<List<CourseSchedule>> GetScheduleByDateAsync(DateTime date, CancellationToken cancellationToken = default)
         {
             var dayOfWeek = GetDayOfWeekFromDate(date);
-            var weekNumber = GetWeekNumberFromDate(date);
+            var weekNumber = await _calendarService.GetWeekNumberFromDateAsync(date);
 
             return await _dbContext.CourseSchedules
                 .Where(s => s.DayOfWeek == dayOfWeek &&
@@ -67,8 +69,8 @@ namespace wish_drom.Services
 
         public async Task<List<CourseSchedule>> GetScheduleByDateRangeAsync(DateTime startDate, DateTime endDate, CancellationToken cancellationToken = default)
         {
-            var startWeek = GetWeekNumberFromDate(startDate);
-            var endWeek = GetWeekNumberFromDate(endDate);
+            var startWeek = await _calendarService.GetWeekNumberFromDateAsync(startDate);
+            var endWeek = await _calendarService.GetWeekNumberFromDateAsync(endDate);
 
             return await _dbContext.CourseSchedules
                 .Where(s => s.StartWeek <= endWeek && s.EndWeek >= startWeek)
@@ -96,39 +98,6 @@ namespace wish_drom.Services
         }
 
         /// <summary>
-        /// 根据日期计算所在周次
-        /// 对应秋季学期9月1日、春季学期3月1日开始
-        /// </summary>
-        public int GetWeekNumberFromDate(DateTime date)
-        {
-            var semesterStart = GetSemesterStartDate(date);
-            if (date < semesterStart)
-                return 1;
-
-            var weeks = (int)((date - semesterStart).TotalDays / 7) + 1;
-            return Math.Clamp(weeks, 1, 20);
-        }
-
-        /// <summary>
-        /// 根据日期返回该日期所在学期的开始日期
-        /// </summary>
-        private DateTime GetSemesterStartDate(DateTime date)
-        {
-            if (date.Month >= 9)
-            {
-                return new DateTime(date.Year, 9, 1);
-            }
-            else if (date.Month >= 3)
-            {
-                return new DateTime(date.Year, 3, 1);
-            }
-            else
-            {
-                return new DateTime(date.Year - 1, 9, 1);
-            }
-        }
-
-        /// <summary>
         /// 从日期计算星期几（1=周一，7=周日）
         /// </summary>
         private static int GetDayOfWeekFromDate(DateTime date)
@@ -137,9 +106,20 @@ namespace wish_drom.Services
             return dayOfWeek == 0 ? 7 : dayOfWeek;
         }
 
-        public int GetCurrentWeekNumber()
+        /// <summary>
+        /// 根据日期计算所在周次（使用校历服务）
+        /// </summary>
+        public Task<int> GetWeekNumberFromDateAsync(DateTime date)
         {
-            return GetWeekNumberFromDate(DateTime.Now);
+            return _calendarService.GetWeekNumberFromDateAsync(date);
+        }
+
+        /// <summary>
+        /// 获取当前周次（使用校历服务）
+        /// </summary>
+        public Task<int> GetCurrentWeekNumberAsync()
+        {
+            return _calendarService.GetCurrentWeekNumberAsync();
         }
 
         private string GetCurrentSemester()
