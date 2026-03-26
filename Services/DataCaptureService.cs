@@ -73,7 +73,7 @@ namespace wish_drom.Services
             {
                 try
                 {
-                    var cachedData = await source.Provider.FetchDataAsync(_secureStorage);
+                    var cachedData = await Task.Run(async () => await source.Provider.FetchDataAsync(_secureStorage));
                     if (!string.IsNullOrEmpty(cachedData))
                     {
                         Log("[DataCapture] 使用缓存凭证静默获取数据成功");
@@ -151,6 +151,24 @@ namespace wish_drom.Services
                 // ──────── Navigating 事件：导航发生前 ────────
                 _currentWebView.Navigating += (sender, e) =>
                 {
+                    if (TryUpgradeTongjiUrlToHttps(e.Url, out var upgradedUrl))
+                    {
+                        Log($"[WebView] >>> NAVIGATING intercepted HTTP URL: {e.Url}");
+                        Log($"[WebView]     Upgraded to HTTPS: {upgradedUrl}");
+                        e.Cancel = true;
+
+                        MainThread.BeginInvokeOnMainThread(() =>
+                        {
+                            statusLabel.Text = $"检测到 HTTP 回跳，已升级为 HTTPS...\nURL: {upgradedUrl}";
+                            if (_currentWebView != null)
+                            {
+                                _currentWebView.Source = upgradedUrl;
+                            }
+                        });
+
+                        return;
+                    }
+
                     Log($"[WebView] >>> NAVIGATING to: {e.Url}");
                     Log($"[WebView]     NavigationEvent: {e.NavigationEvent}");
                     MainThread.BeginInvokeOnMainThread(() =>
@@ -248,7 +266,7 @@ namespace wish_drom.Services
                         {
                             statusLabel.Text = "正在获取课表数据...";
                             Log("[DataCapture] 阶段二：开始 FetchDataAsync");
-                            var businessData = await source.Provider.FetchDataAsync(_secureStorage);
+                            var businessData = await Task.Run(async () => await source.Provider.FetchDataAsync(_secureStorage));
                             Log($"[DataCapture] 阶段二结果: {(businessData != null ? $"{businessData.Length} chars" : "null")}");
 
                             if (!string.IsNullOrEmpty(businessData))
@@ -486,7 +504,7 @@ namespace wish_drom.Services
                 }
                 catch
                 {
-                    return trimmed.Trim('"');
+                    return trimmed?.Trim('"');
                 }
             }
 
@@ -610,7 +628,7 @@ namespace wish_drom.Services
             }
             catch (Exception ex)
             {
-                Log($"[DataCapture] 关闭 WebView 页面失败: {ex.Message}");
+                Log($"[DataCapture] 关闭 WebView 页面失败: {ex}");
             }
 
             _currentWebView = null;
@@ -651,6 +669,36 @@ namespace wish_drom.Services
             return Application.Current?.Windows
                 .FirstOrDefault(window => window.Page != null)
                 ?.Page;
+        }
+
+        private static bool TryUpgradeTongjiUrlToHttps(string? rawUrl, out string upgradedUrl)
+        {
+            upgradedUrl = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(rawUrl))
+                return false;
+
+            if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri))
+                return false;
+
+            if (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var host = uri.Host ?? string.Empty;
+            var isTongjiDomain = host.Equals("tongji.edu.cn", StringComparison.OrdinalIgnoreCase)
+                || host.EndsWith(".tongji.edu.cn", StringComparison.OrdinalIgnoreCase);
+
+            if (!isTongjiDomain)
+                return false;
+
+            var builder = new UriBuilder(uri!)
+            {
+                Scheme = Uri.UriSchemeHttps,
+                Port = -1
+            };
+
+            upgradedUrl = builder.Uri.ToString();
+            return true;
         }
     }
 }

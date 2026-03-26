@@ -9,6 +9,7 @@ using wish_drom.Services.Plugins;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
+using System.Threading.Channels;
 
 namespace wish_drom.Services
 {
@@ -235,19 +236,44 @@ namespace wish_drom.Services
 
             Log($"[ChatService] 执行设置: scheduleQuery={isScheduleQuery}, functionChoice={(isScheduleQuery ? "Required" : "Auto")}");
 
-            await foreach (var content in _chatService.GetStreamingChatMessageContentsAsync(
-                _sessionHistory[sessionId],
-                executionSettings: settings,
-                kernel: _kernel,
-                cancellationToken: cancellationToken))
+            var chunkChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
             {
-                Log($"[ChatService] 流式分片: role={content.Role}, hasContent={!string.IsNullOrEmpty(content.Content)}");
-                if (content.Content != null)
+                SingleReader = true,
+                SingleWriter = true
+            });
+
+            var streamTask = Task.Run(async () =>
+            {
+                try
                 {
-                    fullResponse.Append(content.Content);
-                    yield return content.Content;
+                    await foreach (var content in _chatService.GetStreamingChatMessageContentsAsync(
+                        _sessionHistory[sessionId],
+                        executionSettings: settings,
+                        kernel: _kernel,
+                        cancellationToken: cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+                    {
+                        Log($"[ChatService] 流式分片: role={content.Role}, hasContent={!string.IsNullOrEmpty(content.Content)}");
+                        if (!string.IsNullOrEmpty(content.Content))
+                        {
+                            await chunkChannel.Writer.WriteAsync(content.Content, cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+
+                    chunkChannel.Writer.TryComplete();
                 }
+                catch (Exception ex)
+                {
+                    chunkChannel.Writer.TryComplete(ex);
+                }
+            }, cancellationToken);
+
+            await foreach (var chunk in chunkChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                fullResponse.Append(chunk);
+                yield return chunk;
             }
+
+            await streamTask.ConfigureAwait(false);
 
             // 保存助手回复
             var responseText = fullResponse.ToString();

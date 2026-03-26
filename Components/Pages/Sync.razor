@@ -403,18 +403,32 @@
                 // 同济 API 返回格式: { "data": [ { "kcmc": "高等数学", ... } ] }
                 foreach (var item in data.EnumerateArray())
                 {
+                    var dayOfWeek = GetDayOfWeekProp(item) ?? GetIntProp(item, "xqj") ?? GetIntProp(item, "dayOfWeek") ?? 1;
+                    var (startPeriod, endPeriod) = GetPeriodRange(item);
+
                     var course = new CourseSchedule
                     {
                         CourseName = GetStringProp(item, "kcmc") ?? GetStringProp(item, "courseName") ?? "",
                         Location = GetStringProp(item, "cdmc") ?? GetStringProp(item, "location") ?? "",
                         Teacher = GetStringProp(item, "jsxm") ?? GetStringProp(item, "teacher") ?? "",
-                        DayOfWeek = GetIntProp(item, "xqj") ?? GetIntProp(item, "dayOfWeek") ?? 1,
-                        StartPeriod = GetIntProp(item, "kcsj") ?? GetIntProp(item, "startPeriod") ?? 1,
-                        EndPeriod = GetIntProp(item, "jcsj") ?? GetIntProp(item, "endPeriod") ?? 2,
-                        StartWeek = GetIntProp(item, "kkz") ?? GetIntProp(item, "startWeek") ?? 1,
-                        EndWeek = GetIntProp(item, "jkz") ?? GetIntProp(item, "endWeek") ?? 16,
+                        DayOfWeek = dayOfWeek,
+                        StartPeriod = Math.Clamp(startPeriod, 1, 14),
+                        EndPeriod = Math.Clamp(endPeriod, 1, 14),
+                        StartWeek = GetIntProp(item, "kkz") ?? GetIntProp(item, "startWeek") ?? GetIntProp(item, "startZc") ?? 1,
+                        EndWeek = GetIntProp(item, "jkz") ?? GetIntProp(item, "endWeek") ?? GetIntProp(item, "endZc") ?? 16,
+                        WeekType = GetStringProp(item, "zcmc") ?? GetStringProp(item, "weekType"),
                         Semester = GetStringProp(item, "xnxqmc") ?? GetStringProp(item, "semester") ?? GetCurrentSemester()
                     };
+
+                    if (course.EndPeriod < course.StartPeriod)
+                    {
+                        course.EndPeriod = course.StartPeriod;
+                    }
+
+                    if (course.EndWeek < course.StartWeek)
+                    {
+                        course.EndWeek = course.StartWeek;
+                    }
 
                     if (!string.IsNullOrEmpty(course.CourseName))
                     {
@@ -428,6 +442,8 @@
                 Debug.WriteLine("[Sync] 未能解析出任何课程数据");
                 return 0;
             }
+
+            NormalizeImportedDayOfWeek(courses);
 
             // 保存到数据库
             var dbContext = new AppDbContext();
@@ -465,11 +481,130 @@
 
     private static int? GetIntProp(JsonElement element, string name)
     {
-        if (element.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.Number)
+        if (!element.TryGetProperty(name, out var prop))
+        {
+            return null;
+        }
+
+        if (prop.ValueKind == JsonValueKind.Number)
         {
             return prop.GetInt32();
         }
+
+        if (prop.ValueKind == JsonValueKind.String)
+        {
+            var raw = prop.GetString();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            if (int.TryParse(raw, out var value))
+            {
+                return value;
+            }
+
+            var digits = new string(raw.Where(char.IsDigit).ToArray());
+            if (int.TryParse(digits, out value))
+            {
+                return value;
+            }
+        }
+
         return null;
+    }
+
+    private static int NormalizeDayOfWeek(int dayOfWeek)
+    {
+        return Math.Clamp(dayOfWeek, 1, 7);
+    }
+
+    private static void NormalizeImportedDayOfWeek(List<CourseSchedule> courses)
+    {
+        var days = courses.Select(c => c.DayOfWeek).ToList();
+        if (days.Count == 0)
+        {
+            return;
+        }
+
+        // 某些接口返回 0-6（周一=0），统一转换为 1-7。
+        var looksZeroBased = days.All(d => d >= 0 && d <= 6) && days.Contains(0) && !days.Contains(7);
+        if (looksZeroBased)
+        {
+            foreach (var course in courses)
+            {
+                course.DayOfWeek += 1;
+            }
+        }
+
+        foreach (var course in courses)
+        {
+            course.DayOfWeek = NormalizeDayOfWeek(course.DayOfWeek);
+        }
+    }
+
+    private static int? GetDayOfWeekProp(JsonElement element)
+    {
+        var dayText = GetStringProp(element, "xqmc")
+            ?? GetStringProp(element, "weekday")
+            ?? GetStringProp(element, "dayName");
+
+        if (string.IsNullOrWhiteSpace(dayText))
+        {
+            return null;
+        }
+
+        if (dayText.Contains("一")) return 1;
+        if (dayText.Contains("二")) return 2;
+        if (dayText.Contains("三")) return 3;
+        if (dayText.Contains("四")) return 4;
+        if (dayText.Contains("五")) return 5;
+        if (dayText.Contains("六")) return 6;
+        if (dayText.Contains("日") || dayText.Contains("天")) return 7;
+
+        if (int.TryParse(new string(dayText.Where(char.IsDigit).ToArray()), out var dayNum))
+        {
+            return NormalizeDayOfWeek(dayNum);
+        }
+
+        return null;
+    }
+
+    private static (int StartPeriod, int EndPeriod) GetPeriodRange(JsonElement element)
+    {
+        var start = GetIntProp(element, "kcsj")
+            ?? GetIntProp(element, "startPeriod")
+            ?? GetIntProp(element, "beginSection");
+
+        var end = GetIntProp(element, "jcsj")
+            ?? GetIntProp(element, "endPeriod")
+            ?? GetIntProp(element, "endSection");
+
+        if (start.HasValue && end.HasValue)
+        {
+            return (start.Value, end.Value);
+        }
+
+        var sectionText = GetStringProp(element, "section")
+            ?? GetStringProp(element, "jcdm")
+            ?? GetStringProp(element, "timeNode");
+
+        if (!string.IsNullOrWhiteSpace(sectionText))
+        {
+            var normalized = sectionText.Replace("节", "").Replace("[", "").Replace("]", "");
+            var parts = normalized.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length == 2 && int.TryParse(parts[0], out var s) && int.TryParse(parts[1], out var e))
+            {
+                return (s, e);
+            }
+
+            if (int.TryParse(new string(normalized.Where(char.IsDigit).ToArray()), out var single))
+            {
+                return (single, single);
+            }
+        }
+
+        return (1, 2);
     }
 
     private static string GetCurrentSemester()

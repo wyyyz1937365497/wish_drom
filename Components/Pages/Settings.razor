@@ -187,6 +187,12 @@
                     </div>
                 </div>
             </div>
+
+            <div class="action-buttons">
+                <button class="action-btn secondary db-debug-btn" @onclick="NavigateToScheduleDbDebug">
+                    🧪 查看课表数据库
+                </button>
+            </div>
         </section>
 
         @* 关于部分 *@
@@ -582,6 +588,10 @@
         opacity: 0.5;
     }
 
+    .db-debug-btn {
+        margin-top: 8px;
+    }
+
     .action-btn.danger {
         background: white;
         color: #8B3A3A;
@@ -950,5 +960,10 @@
     {
         saveMessage = null;
         StateHasChanged();
+    }
+
+    private void NavigateToScheduleDbDebug()
+    {
+        Navigation.NavigateTo("/schedule-db-debug");
     }
 }

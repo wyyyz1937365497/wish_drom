@@ -1,0 +1,251 @@
+@page "/schedule-db-debug"
+@using Microsoft.EntityFrameworkCore
+@using wish_drom.Data
+@using wish_drom.Data.Entities
+@inject AppDbContext DbContext
+@inject NavigationManager Navigation
+
+<div class="db-debug-page">
+    <header class="app-bar">
+        <button class="back-btn" @onclick="NavigateBack">←</button>
+        <h1 class="app-title">课表数据库调试</h1>
+        <button class="refresh-btn" @onclick="LoadDataAsync">刷新</button>
+    </header>
+
+    <div class="content">
+        @if (isLoading)
+        {
+            <p class="hint">正在加载数据库...</p>
+        }
+        else
+        {
+            <section class="card">
+                <h2>总览</h2>
+                <p>总记录数: @allCourses.Count</p>
+                <p>学期数: @semesterGroups.Count</p>
+                <p>最近同步: @(lastSyncTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "无")</p>
+            </section>
+
+            <section class="card">
+                <h2>按星期统计</h2>
+                @if (dayGroups.Count == 0)
+                {
+                    <p class="hint">暂无数据</p>
+                }
+                else
+                {
+                    @foreach (var g in dayGroups)
+                    {
+                        <p>@FormatWeekday(g.Day): @g.Count 条</p>
+                    }
+                }
+            </section>
+
+            <section class="card">
+                <h2>按学期统计</h2>
+                @if (semesterGroups.Count == 0)
+                {
+                    <p class="hint">暂无数据</p>
+                }
+                else
+                {
+                    @foreach (var g in semesterGroups)
+                    {
+                        <p>@g.Semester: @g.Count 条</p>
+                    }
+                }
+            </section>
+
+            <section class="card">
+                <h2>记录明细 (前 @previewCourses.Count 条)</h2>
+                @if (previewCourses.Count == 0)
+                {
+                    <p class="hint">暂无数据，请先去数据同步页面抓取课表。</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>课程</th>
+                                    <th>星期</th>
+                                    <th>节次</th>
+                                    <th>周次</th>
+                                    <th>地点</th>
+                                    <th>教师</th>
+                                    <th>学期</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var c in previewCourses)
+                                {
+                                    <tr>
+                                        <td>@c.CourseName</td>
+                                        <td>@FormatWeekday(c.DayOfWeek)</td>
+                                        <td>@c.StartPeriod-@c.EndPeriod</td>
+                                        <td>@c.StartWeek-@c.EndWeek @(!string.IsNullOrWhiteSpace(c.WeekType) ? $"({c.WeekType})" : "")</td>
+                                        <td>@c.Location</td>
+                                        <td>@c.Teacher</td>
+                                        <td>@c.Semester</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+        }
+    </div>
+</div>
+
+<style>
+    .db-debug-page {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background: #f6f7fb;
+    }
+
+    .app-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px;
+        background: #1f3558;
+        color: #fff;
+    }
+
+    .back-btn,
+    .refresh-btn {
+        border: none;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: rgba(255,255,255,0.16);
+        color: #fff;
+        cursor: pointer;
+    }
+
+    .app-title {
+        flex: 1;
+        margin: 0;
+        font-size: 18px;
+    }
+
+    .content {
+        padding: 12px;
+        overflow-y: auto;
+    }
+
+    .card {
+        background: #fff;
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .card h2 {
+        margin: 0 0 8px 0;
+        font-size: 15px;
+        color: #1f3558;
+    }
+
+    .hint {
+        color: #6b7280;
+        margin: 0;
+    }
+
+    .table-wrap {
+        overflow-x: auto;
+    }
+
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 760px;
+        font-size: 13px;
+    }
+
+    th,
+    td {
+        border-bottom: 1px solid #e5e7eb;
+        text-align: left;
+        padding: 8px;
+        vertical-align: top;
+    }
+
+    th {
+        background: #f8fafc;
+        color: #334155;
+        position: sticky;
+        top: 0;
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private List<CourseSchedule> allCourses = new();
+    private List<CourseSchedule> previewCourses = new();
+    private List<(int Day, int Count)> dayGroups = new();
+    private List<(string Semester, int Count)> semesterGroups = new();
+    private DateTime? lastSyncTime;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        allCourses = await DbContext.CourseSchedules
+            .AsNoTracking()
+            .OrderBy(c => c.DayOfWeek)
+            .ThenBy(c => c.StartPeriod)
+            .ThenBy(c => c.CourseName)
+            .ToListAsync();
+
+        previewCourses = allCourses.Take(200).ToList();
+
+        dayGroups = allCourses
+            .GroupBy(c => c.DayOfWeek)
+            .OrderBy(g => g.Key)
+            .Select(g => (g.Key, g.Count()))
+            .ToList();
+
+        semesterGroups = allCourses
+            .GroupBy(c => string.IsNullOrWhiteSpace(c.Semester) ? "(空)" : c.Semester)
+            .OrderBy(g => g.Key)
+            .Select(g => (g.Key, g.Count()))
+            .ToList();
+
+        lastSyncTime = allCourses.Count > 0
+            ? allCourses.Max(c => c.SyncTime)
+            : null;
+
+        isLoading = false;
+    }
+
+    private static string FormatWeekday(int day)
+    {
+        return day switch
+        {
+            1 => "周一",
+            2 => "周二",
+            3 => "周三",
+            4 => "周四",
+            5 => "周五",
+            6 => "周六",
+            7 => "周日",
+            _ => $"未知({day})"
+        };
+    }
+
+    private void NavigateBack()
+    {
+        Navigation.NavigateTo("/settings");
+    }
+}
