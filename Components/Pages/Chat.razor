@@ -1,5 +1,6 @@
 @page "/chat"
 @using wish_drom.Models
+@using wish_drom.Services
 @inject IChatService ChatService
 @inject NavigationManager Navigation
 @inject IJSRuntime JavaScriptRuntime
@@ -15,12 +16,17 @@
                     <p class="header-status">@(isConfigured ? "在线" : "未配置")</p>
                 </div>
             </div>
-            @if (messages.Count > 0)
-            {
-                <button class="icon-btn" @onclick="@(() => ClearChat())" title="清空聊天">
-                    <span>🗑️</span>
+            <div class="header-actions">
+                @if (messages.Count > 0)
+                {
+                    <button class="icon-btn" @onclick="@(() => StartNewChat())" title="新建对话">
+                        <span>✏️</span>
+                    </button>
+                }
+                <button class="icon-btn" @onclick="@(() => ShowHistory())" title="历史对话">
+                    <span>📋</span>
                 </button>
-            }
+            </div>
         </div>
     </header>
 
@@ -65,7 +71,7 @@
                         else
                         {
                             <div class="message-bubble assistant-message">
-                                <p class="message-text">@((MarkupString)FormatMarkdown(message.Content))</p>
+                                <div class="message-text markdown-body">@((MarkupString)RenderMarkdown(message.Content))</div>
                                 <span class="message-time">@message.Timestamp.ToString("HH:mm")</span>
                             </div>
                         }
@@ -216,6 +222,11 @@
 
     .icon-btn:active {
         background: rgba(255,255,255,0.2);
+    }
+
+    .header-actions {
+        display: flex;
+        gap: 8px;
     }
 
     /* ==================== 消息区域 ==================== */
@@ -516,6 +527,76 @@
         font-size: 18px;
     }
 
+    /* ==================== Markdown 样式 ==================== */
+    .markdown-body {
+        line-height: 1.6;
+    }
+
+    .markdown-body :deep(p) {
+        margin: 0.5em 0;
+    }
+
+    .markdown-body :deep(code) {
+        background: #f4f4f4;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 0.9em;
+    }
+
+    .markdown-body :deep(pre) {
+        background: #2d2d2d;
+        color: #f8f8f2;
+        padding: 16px;
+        border-radius: 8px;
+        overflow-x: auto;
+        margin: 8px 0;
+    }
+
+    .markdown-body :deep(pre code) {
+        background: transparent;
+        padding: 0;
+        color: inherit;
+    }
+
+    .markdown-body :deep(ul), .markdown-body :deep(ol) {
+        margin: 0.5em 0;
+        padding-left: 1.5em;
+    }
+
+    .markdown-body :deep(li) {
+        margin: 0.25em 0;
+    }
+
+    .markdown-body :deep(blockquote) {
+        border-left: 4px solid #ddd;
+        margin: 0.5em 0;
+        padding-left: 16px;
+        color: #666;
+    }
+
+    .markdown-body :deep(a) {
+        color: #8B3A3A;
+        text-decoration: underline;
+    }
+
+    .markdown-body :deep(table) {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 8px 0;
+    }
+
+    .markdown-body :deep(th), .markdown-body :deep(td) {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+
+    .markdown-body :deep(th) {
+        background: #f4f4f4;
+        font-weight: 600;
+    }
+
     /* ==================== Windows/桌面适配 ==================== */
     @@media (min-width: 768px) {
         .chat-page {
@@ -538,12 +619,43 @@
     private string streamingContent = string.Empty;
     private string currentSessionId = string.Empty;
 
+    private string CurrentSessionId
+    {
+        get => Preferences.Default.Get("current_chat_session", "");
+        set => Preferences.Default.Set("current_chat_session", value);
+    }
+
     protected override async Task OnInitializedAsync()
     {
         isConfigured = await ChatService.IsConfiguredAsync();
+
         if (isConfigured)
         {
-            currentSessionId = ChatService.StartNewSession();
+            var savedSessionId = CurrentSessionId;
+            if (!string.IsNullOrEmpty(savedSessionId))
+            {
+                var history = await ChatService.GetSessionHistoryAsync(savedSessionId);
+                if (history.Count > 0)
+                {
+                    currentSessionId = savedSessionId;
+                    messages = history.Select(h => new ChatMessage
+                    {
+                        Role = h.Role,
+                        Content = h.Content,
+                        Timestamp = DateTime.Now
+                    }).ToList();
+                }
+                else
+                {
+                    currentSessionId = ChatService.StartNewSession();
+                    CurrentSessionId = currentSessionId;
+                }
+            }
+            else
+            {
+                currentSessionId = ChatService.StartNewSession();
+                CurrentSessionId = currentSessionId;
+            }
         }
     }
 
@@ -624,6 +736,19 @@
         currentSessionId = ChatService.StartNewSession();
     }
 
+    private void StartNewChat()
+    {
+        messages.Clear();
+        currentSessionId = ChatService.StartNewSession();
+        CurrentSessionId = currentSessionId;
+        StateHasChanged();
+    }
+
+    private void ShowHistory()
+    {
+        Navigation.NavigateTo("/chat-history");
+    }
+
     private void InputFocused()
     {
         // 键盘弹出时的处理
@@ -639,11 +764,8 @@
         Navigation.NavigateTo("/settings");
     }
 
-    private string FormatMarkdown(string content)
+    private string RenderMarkdown(string content)
     {
-        return content
-            .Replace("\n", "<br>")
-            .Replace("**", "<strong>")
-            .Replace("*", "<em>");
+        return MarkdownService.Parse(content);
     }
 }

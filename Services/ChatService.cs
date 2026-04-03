@@ -5,6 +5,7 @@ using wish_drom.Data;
 using wish_drom.Data.Entities;
 using wish_drom.Services.Interfaces;
 using wish_drom.Services.Plugins;
+using wish_drom.Models;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
@@ -372,6 +373,56 @@ namespace wish_drom.Services
 
             _dbContext.ChatHistoryRecords.Add(record);
             await _dbContext.SaveChangesAsync();
+        }
+
+        public async Task<List<ChatSessionSummary>> GetAllSessionsAsync()
+        {
+            var sessions = await _dbContext.ChatHistoryRecords
+                .GroupBy(r => r.SessionId)
+                .Select(g => new
+                {
+                    SessionId = g.Key,
+                    FirstUserContent = g.FirstOrDefault(r => r.Role == "user").Content,
+                    CreatedAt = g.Min(r => r.Timestamp),
+                    MessageCount = g.Count()
+                })
+                .OrderByDescending(s => s.CreatedAt)
+                .ToListAsync();
+
+            return sessions.Select(s => new ChatSessionSummary
+            {
+                SessionId = s.SessionId,
+                Title = s.FirstUserContent ?? "新对话",
+                CreatedAt = s.CreatedAt,
+                MessageCount = s.MessageCount
+            }).ToList();
+        }
+
+        public async Task DeleteSessionAsync(string sessionId)
+        {
+            var records = await _dbContext.ChatHistoryRecords
+                .Where(r => r.SessionId == sessionId)
+                .ToListAsync();
+
+            _dbContext.ChatHistoryRecords.RemoveRange(records);
+            await _dbContext.SaveChangesAsync();
+
+            if (_sessionHistory.ContainsKey(sessionId))
+            {
+                _sessionHistory.Remove(sessionId);
+            }
+        }
+
+        public string GenerateSessionTitle(string firstUserMessage)
+        {
+            if (string.IsNullOrWhiteSpace(firstUserMessage))
+                return "新对话";
+
+            var title = firstUserMessage.Length > 30
+                ? firstUserMessage.Substring(0, 30) + "..."
+                : firstUserMessage;
+
+            return title;
         }
     }
 }

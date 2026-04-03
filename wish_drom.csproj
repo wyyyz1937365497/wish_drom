@@ -114,4 +114,10 @@
         <PackageReference Include="MudBlazor" Version="7.15.0" />
     </ItemGroup>
 
+    <!-- Markdown Rendering -->
+    <ItemGroup>
+        <PackageReference Include="Markdig" Version="0.*" />
+        <PackageReference Include="WebStoating.Markdig.Prism" Version="1.*" />
+    </ItemGroup>
+
 </Project>

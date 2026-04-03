@@ -1,3 +1,5 @@
+using wish_drom.Models;
+
 namespace wish_drom.Services.Interfaces
 {
     /// <summary>
@@ -68,5 +70,22 @@ namespace wish_drom.Services.Interfaces
         /// 清除当前会话上下文
         /// </summary>
         Task ClearSessionAsync(string sessionId);
+
+        /// <summary>
+        /// 获取所有会话列表（返回会话摘要信息）
+        /// </summary>
+        Task<List<ChatSessionSummary>> GetAllSessionsAsync();
+
+        /// <summary>
+        /// 删除会话
+        /// </summary>
+        /// <param name="sessionId">会话ID</param>
+        Task DeleteSessionAsync(string sessionId);
+
+        /// <summary>
+        /// 创建会话标题（基于第一条用户消息的前30个字符）
+        /// </summary>
+        /// <param name="firstUserMessage">第一条用户消息</param>
+        string GenerateSessionTitle(string firstUserMessage);
     }
 }

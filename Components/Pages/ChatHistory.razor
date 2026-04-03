@@ -1,0 +1,410 @@
+@page "/chat-history"
+@using wish_drom.Models
+@inject IChatService ChatService
+@inject NavigationManager Navigation
+
+<div class="history-page">
+    @* 顶部应用栏 *@
+    <header class="history-header">
+        <div class="header-content">
+            <button class="back-btn" @onclick="GoBack">
+                <span>←</span>
+            </button>
+            <h1 class="header-title">历史对话</h1>
+            <div class="header-spacer"></div>
+        </div>
+    </header>
+
+    @* 内容区域 *@
+    <div class="history-container">
+        @if (isLoading)
+        {
+            <div class="loading-state">
+                <div class="loading-spinner"></div>
+                <p>加载中...</p>
+            </div>
+        }
+        else if (sessions.Count == 0)
+        {
+            <div class="empty-state">
+                <div class="empty-icon">💬</div>
+                <h2 class="empty-title">暂无历史对话</h2>
+                <p class="empty-desc">开始新对话后，历史记录将显示在这里</p>
+                <button class="new-chat-btn" @onclick="GoToNewChat">
+                    <span>✏️</span>
+                    <span>开始新对话</span>
+                </button>
+            </div>
+        }
+        else
+        {
+            <div class="sessions-list">
+                <div class="new-chat-card" @onclick="GoToNewChat">
+                    <div class="new-chat-icon">✏️</div>
+                    <div class="new-chat-text">新建对话</div>
+                </div>
+
+                @foreach (var session in sessions)
+                {
+                    <div class="session-card" @onclick="@(() => OpenSession(session.SessionId))">
+                        <div class="session-content">
+                            <h3 class="session-title">@session.Title</h3>
+                            <div class="session-meta">
+                                <span class="session-time">@FormatTime(session.CreatedAt)</span>
+                                <span class="session-count">@session.MessageCount 条消息</span>
+                            </div>
+                        </div>
+                        <button class="delete-btn" @onclick="@(() => DeleteSession(session.SessionId))" @onclick:stopPropagation="true">
+                            <span>🗑️</span>
+                        </button>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    /* ==================== 主容器 ==================== */
+    .history-page {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background-color: #F5F5F5;
+    }
+
+    /* ==================== 顶部应用栏 ==================== */
+    .history-header {
+        background-color: #2D3E5F;
+        color: white;
+        padding: 12px 16px;
+        padding-top: max(12px, env(safe-area-inset-top));
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        z-index: 10;
+    }
+
+    .header-content {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .back-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: none;
+        background: rgba(255,255,255,0.1);
+        color: white;
+        font-size: 20px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+    }
+
+    .back-btn:active {
+        background: rgba(255,255,255,0.2);
+    }
+
+    .header-title {
+        flex: 1;
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+    }
+
+    .header-spacer {
+        width: 40px;
+    }
+
+    /* ==================== 内容区域 ==================== */
+    .history-container {
+        flex: 1;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .history-container::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .history-container::-webkit-scrollbar-thumb {
+        background: rgba(0,0,0,0.2);
+        border-radius: 2px;
+    }
+
+    /* ==================== 加载状态 ==================== */
+    .loading-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 24px;
+        gap: 16px;
+        color: #757575;
+    }
+
+    .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #E0E0E0;
+        border-top-color: #8B3A3A;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* ==================== 空状态 ==================== */
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 24px;
+        text-align: center;
+    }
+
+    .empty-icon {
+        font-size: 64px;
+        margin-bottom: 16px;
+        opacity: 0.6;
+    }
+
+    .empty-title {
+        font-size: 22px;
+        font-weight: 600;
+        color: #2D3E5F;
+        margin: 0 0 8px 0;
+    }
+
+    .empty-desc {
+        font-size: 15px;
+        color: #757575;
+        margin: 0 0 24px 0;
+    }
+
+    .new-chat-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 24px;
+        background: linear-gradient(135deg, #8B3A3A 0%, #6B2B2B 100%);
+        color: white;
+        border: none;
+        border-radius: 24px;
+        font-size: 15px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+
+    .new-chat-btn:active {
+        transform: scale(0.95);
+    }
+
+    /* ==================== 会话列表 ==================== */
+    .sessions-list {
+        padding: 16px;
+    }
+
+    .new-chat-card {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px;
+        background: linear-gradient(135deg, #8B3A3A 0%, #6B2B2B 100%);
+        color: white;
+        border-radius: 16px;
+        margin-bottom: 16px;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+
+    .new-chat-card:active {
+        transform: scale(0.98);
+    }
+
+    .new-chat-icon {
+        font-size: 24px;
+    }
+
+    .new-chat-text {
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .session-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        background: white;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .session-card:active {
+        background: #F5F5F5;
+    }
+
+    .session-content {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .session-title {
+        font-size: 15px;
+        font-weight: 500;
+        color: #2C2C2C;
+        margin: 0 0 4px 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .session-meta {
+        display: flex;
+        gap: 12px;
+        font-size: 13px;
+        color: #757575;
+    }
+
+    .session-time {
+        flex-shrink: 0;
+    }
+
+    .session-count {
+        flex-shrink: 0;
+    }
+
+    .delete-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: none;
+        background: transparent;
+        color: #757575;
+        font-size: 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s, color 0.2s;
+        flex-shrink: 0;
+    }
+
+    .delete-btn:active {
+        background: #FFEBEE;
+        color: #D32F2F;
+    }
+
+    /* ==================== Windows/桌面适配 ==================== */
+    @@media (min-width: 768px) {
+        .history-page {
+            max-width: 480px;
+            margin: 0 auto;
+            box-shadow: 0 0 40px rgba(0,0,0,0.1);
+        }
+    }
+</style>
+
+@code {
+    private List<ChatSessionSummary> sessions = new();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSessionsAsync();
+    }
+
+    private async Task LoadSessionsAsync()
+    {
+        isLoading = true;
+        try
+        {
+            sessions = await ChatService.GetAllSessionsAsync();
+        }
+        catch
+        {
+            // Handle error silently or show a message
+            sessions = new();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo("/chat");
+    }
+
+    private void GoToNewChat()
+    {
+        // Clear the saved session to start a new one
+        Preferences.Default.Set("current_chat_session", "");
+        Navigation.NavigateTo("/chat");
+    }
+
+    private void OpenSession(string sessionId)
+    {
+        Preferences.Default.Set("current_chat_session", sessionId);
+        Navigation.NavigateTo("/chat");
+    }
+
+    private async Task DeleteSession(string sessionId)
+    {
+        // Confirm deletion
+        // Note: In a real app, you might want to show a confirmation dialog
+
+        await ChatService.DeleteSessionAsync(sessionId);
+
+        // Clear saved session if we deleted the current one
+        var currentSaved = Preferences.Default.Get("current_chat_session", "");
+        if (currentSaved == sessionId)
+        {
+            Preferences.Default.Set("current_chat_session", "");
+        }
+
+        // Reload the list
+        await LoadSessionsAsync();
+    }
+
+    private string FormatTime(DateTime dateTime)
+    {
+        var now = DateTime.Now;
+        var diff = now - dateTime;
+
+        if (diff.TotalDays < 1)
+        {
+            if (diff.TotalHours < 1)
+            {
+                if (diff.TotalMinutes < 1)
+                    return "刚刚";
+                return $"{(int)diff.TotalMinutes} 分钟前";
+            }
+            return $"今天 {dateTime:HH:mm}";
+        }
+        else if (diff.TotalDays < 2)
+        {
+            return $"昨天 {dateTime:HH:mm}";
+        }
+        else if (diff.TotalDays < 7)
+        {
+            return dateTime.ToString("ddd HH:mm", new System.Globalization.CultureInfo("zh-CN"));
+        }
+        else
+        {
+            return dateTime.ToString("MM-dd HH:mm");
+        }
+    }
+}
