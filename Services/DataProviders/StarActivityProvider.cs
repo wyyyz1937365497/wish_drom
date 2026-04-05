@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using wish_drom.Models;
@@ -69,7 +68,7 @@ namespace wish_drom.Services.DataProviders
 
             try
             {
-                // 尝试多策略提取 Token（传入 HTML 用于策略 5 正则搜索）
+                // 通过 XHR 拦截器提取 Token
                 var token = await TryGetTokenAsync(evaluateJavaScript, html);
                 if (!string.IsNullOrEmpty(token))
                 {
@@ -230,284 +229,26 @@ namespace wish_drom.Services.DataProviders
         #region Token 提取
 
         /// <summary>
-        /// 多策略从 WebView 中提取 Bearer Token
-        /// 策略 1: 直接 localStorage/sessionStorage 键名探测
-        /// 策略 2: Vue 运行时状态探索（读取内存中已解密的 token）
-        /// 策略 3: Vuex 持久化 state 解码
-        /// 策略 4: XHR 拦截器（eval 拆分注入）+ 触发请求捕获
-        /// 策略 5: HTML 源码中正则搜索 JWT token
+        /// 通过 XHR 拦截器从 WebView 中提取 Bearer Token。
+        /// 注入 setRequestHeader 钩子捕获 Authorization header，触发 SPA 请求后轮询获取。
         /// </summary>
         private static async Task<string?> TryGetTokenAsync(
             Func<string, Task<string?>> evaluateJavaScript,
             string html)
         {
-            // ─── 策略 1：直接 localStorage/sessionStorage 键名 ───
-            var tokenKeys = new[] { "token", "access_token", "auth_token", "Authorization", "bearer_token", "star_token" };
-
-            foreach (var key in tokenKeys)
-            {
-                var value = NormalizeJavaScriptValue(await evaluateJavaScript($"localStorage.getItem('{key}')"));
-                if (!string.IsNullOrEmpty(value))
-                {
-                    Log($"[StarActivityProvider] 策略1命中: localStorage['{key}'] (len={value.Length})");
-                    return StripBearerPrefix(value);
-                }
-            }
-
-            foreach (var key in tokenKeys)
-            {
-                var value = NormalizeJavaScriptValue(await evaluateJavaScript($"sessionStorage.getItem('{key}')"));
-                if (!string.IsNullOrEmpty(value))
-                {
-                    Log($"[StarActivityProvider] 策略1命中: sessionStorage['{key}'] (len={value.Length})");
-                    return StripBearerPrefix(value);
-                }
-            }
-
-            Log("[StarActivityProvider] 策略1: 未找到直接 token 键名");
-
-            // ─── 策略 2：Vue 运行时状态探索 ───
-            var vueToken = await TryGetTokenFromVueStateAsync(evaluateJavaScript);
-            if (!string.IsNullOrEmpty(vueToken))
-            {
-                Log($"[StarActivityProvider] 策略2命中: Vue 运行时状态 (len={vueToken.Length})");
-                return vueToken;
-            }
-
-            Log("[StarActivityProvider] 策略2: Vue 状态探测失败");
-
-            // ─── 策略 3：Vuex 持久化 state 解码 ───
-            var persistedToken = await TryGetTokenFromPersistedStateAsync(evaluateJavaScript);
-            if (!string.IsNullOrEmpty(persistedToken))
-            {
-                Log($"[StarActivityProvider] 策略3命中: Vuex 持久化 state (len={persistedToken.Length})");
-                return persistedToken;
-            }
-
-            Log("[StarActivityProvider] 策略3: Vuex 持久化 state 解码失败");
-
-            // ─── 策略 4：XHR 拦截器 + 触发请求 ───
             var interceptedToken = await TryGetTokenViaInterceptionAsync(evaluateJavaScript);
             if (!string.IsNullOrEmpty(interceptedToken))
             {
-                Log($"[StarActivityProvider] 策略4命中: XHR 拦截 (len={interceptedToken.Length})");
+                Log($"[StarActivityProvider] Token 提取成功: XHR 拦截 (len={interceptedToken.Length})");
                 return interceptedToken;
             }
 
-            Log("[StarActivityProvider] 策略4: XHR 拦截失败");
-
-            // ─── 策略 5：HTML 源码中搜索 JWT token ───
-            var htmlToken = TryExtractTokenFromHtml(html);
-            if (!string.IsNullOrEmpty(htmlToken))
-            {
-                Log($"[StarActivityProvider] 策略5命中: HTML 源码搜索 (len={htmlToken.Length})");
-                return htmlToken;
-            }
-
-            Log("[StarActivityProvider] 策略5: HTML 源码搜索失败");
-            Log("[StarActivityProvider] 所有 Token 提取策略均失败");
+            Log("[StarActivityProvider] XHR 拦截提取失败");
             return null;
         }
 
         /// <summary>
-        /// 策略 2：通过 Vue 实例的 $store.state 直接读取内存中已解密的 token
-        /// 同时探测 Vue 2 (__vue__) 和 Vue 3 (__vue_app__) 模式
-        /// </summary>
-        private static async Task<string?> TryGetTokenFromVueStateAsync(Func<string, Task<string?>> evaluateJavaScript)
-        {
-            // 尝试多种选择器和 Vue 版本
-            var selectors = new[] { "#app", "#uni-app", "#vue-app", "body > div" };
-            string? foundSelector = null;
-
-            foreach (var sel in selectors)
-            {
-                // Vue 2: __vue__
-                var vue2 = NormalizeJavaScriptValue(await evaluateJavaScript(
-                    $"document.querySelector('{sel}').__vue__?1:0"));
-                if (vue2 == "1")
-                {
-                    await evaluateJavaScript(
-                        $"window.__v=document.querySelector('{sel}').__vue__");
-                    foundSelector = sel;
-                    break;
-                }
-
-                // Vue 3: __vue_app__
-                var vue3 = NormalizeJavaScriptValue(await evaluateJavaScript(
-                    $"document.querySelector('{sel}').__vue_app__?1:0"));
-                if (vue3 == "1")
-                {
-                    await evaluateJavaScript(
-                        $"window.__v=document.querySelector('{sel}').__vue_app__.config.globalProperties.$store");
-                    foundSelector = sel;
-                    break;
-                }
-            }
-
-            if (foundSelector == null) return null;
-
-            // 检查 store 是否存在
-            var storeExists = NormalizeJavaScriptValue(await evaluateJavaScript(
-                "window.__v&&window.__v.$store?1:0"));
-            if (storeExists == "1")
-            {
-                await evaluateJavaScript("window.__vs=window.__v.$store.state");
-            }
-            else
-            {
-                // 可能 state 直接就在 __v 上
-                storeExists = NormalizeJavaScriptValue(await evaluateJavaScript(
-                    "window.__v&&window.__v.state?1:0"));
-                if (storeExists == "1")
-                {
-                    await evaluateJavaScript("window.__vs=window.__v.state");
-                }
-                else
-                {
-                    await evaluateJavaScript("delete window.__v");
-                    return null;
-                }
-            }
-
-            // 探测顶层 token 字段
-            var topLevelProbes = new[]
-            {
-                "window.__vs.token||''",
-                "window.__vs.accessToken||''",
-                "window.__vs.access_token||''",
-                "window.__vs.bearerToken||''",
-            };
-
-            foreach (var probe in topLevelProbes)
-            {
-                var value = NormalizeJavaScriptValue(await evaluateJavaScript(probe));
-                if (!string.IsNullOrEmpty(value))
-                {
-                    await evaluateJavaScript("delete window.__v");
-                    await evaluateJavaScript("delete window.__vs");
-                    return StripBearerPrefix(value);
-                }
-            }
-
-            // 探测嵌套模块
-            var nestedProbes = new[]
-            {
-                "window.__vs.user?window.__vs.user.token||'':''",
-                "window.__vs.user?window.__vs.user.accessToken||'':''",
-                "window.__vs.auth?window.__vs.auth.token||'':''",
-                "window.__vs.login?window.__vs.login.token||'':''",
-                "window.__vs.account?window.__vs.account.token||'':''",
-            };
-
-            foreach (var probe in nestedProbes)
-            {
-                var value = NormalizeJavaScriptValue(await evaluateJavaScript(probe));
-                if (!string.IsNullOrEmpty(value))
-                {
-                    await evaluateJavaScript("delete window.__v");
-                    await evaluateJavaScript("delete window.__vs");
-                    return StripBearerPrefix(value);
-                }
-            }
-
-            // 尝试 getApp() (uni-app 专有)
-            var getAppResult = NormalizeJavaScriptValue(await evaluateJavaScript(
-                "typeof getApp==='undefined'?'':getApp().$scope.$store.state.token||''"));
-            if (!string.IsNullOrEmpty(getAppResult))
-            {
-                await evaluateJavaScript("delete window.__v");
-                await evaluateJavaScript("delete window.__vs");
-                return StripBearerPrefix(getAppResult);
-            }
-
-            // 清理
-            await evaluateJavaScript("delete window.__v");
-            await evaluateJavaScript("delete window.__vs");
-            return null;
-        }
-
-        /// <summary>
-        /// 策略 3：尝试从 Vuex 持久化存储键中解码 token
-        /// </summary>
-        private static async Task<string?> TryGetTokenFromPersistedStateAsync(
-            Func<string, Task<string?>> evaluateJavaScript)
-        {
-            var vuexKeys = new[] { "vuex", "store", "persistedState", "vuexPersist" };
-
-            foreach (var key in vuexKeys)
-            {
-                var raw = NormalizeJavaScriptValue(await evaluateJavaScript(
-                    $"localStorage.getItem('{key}')"));
-                if (string.IsNullOrEmpty(raw)) continue;
-
-                // 尝试直接 JSON 解析
-                var token = TryExtractTokenFromJson(raw);
-                if (!string.IsNullOrEmpty(token))
-                {
-                    Log($"[StarActivityProvider] 策略3: 从 localStorage['{key}'] JSON 解析成功");
-                    return token;
-                }
-
-                // 尝试 base64 解码后 JSON 解析
-                try
-                {
-                    var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(raw));
-                    token = TryExtractTokenFromJson(decoded);
-                    if (!string.IsNullOrEmpty(token))
-                    {
-                        Log($"[StarActivityProvider] 策略3: 从 localStorage['{key}'] base64 解码成功");
-                        return token;
-                    }
-                }
-                catch { /* base64 解码失败，跳过 */ }
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// 从 JSON 字符串中搜索 token 相关字段
-        /// </summary>
-        private static string? TryExtractTokenFromJson(string json)
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                // 检查顶层字段
-                foreach (var field in new[] { "token", "accessToken", "access_token", "bearerToken" })
-                {
-                    if (root.TryGetProperty(field, out var prop) && prop.ValueKind == JsonValueKind.String)
-                    {
-                        var value = prop.GetString();
-                        if (!string.IsNullOrEmpty(value)) return StripBearerPrefix(value);
-                    }
-                }
-
-                // 检查嵌套对象
-                foreach (var parentField in new[] { "user", "auth", "login", "account" })
-                {
-                    if (root.TryGetProperty(parentField, out var parent) && parent.ValueKind == JsonValueKind.Object)
-                    {
-                        foreach (var field in new[] { "token", "accessToken", "access_token" })
-                        {
-                            if (parent.TryGetProperty(field, out var prop) && prop.ValueKind == JsonValueKind.String)
-                            {
-                                var value = prop.GetString();
-                                if (!string.IsNullOrEmpty(value)) return StripBearerPrefix(value);
-                            }
-                        }
-                    }
-                }
-            }
-            catch { /* JSON 解析失败，跳过 */ }
-
-            return null;
-        }
-
-        /// <summary>
-        /// 策略 4：使用 eval 拆分注入 XHR 拦截器，然后触发 SPA 请求来捕获 Authorization header。
+        /// 使用 eval 拆分注入 XHR 拦截器，然后触发 SPA 请求来捕获 Authorization header。
         /// 核心改进：用 String.fromCharCode 拼接 "function" 关键字，绕过 JS 超时限制。
         /// 不调用 location.reload()，避免销毁 WebView 上下文。
         /// </summary>
@@ -590,36 +331,7 @@ namespace wish_drom.Services.DataProviders
         }
 
         /// <summary>
-        /// 策略 5：从 HTML 源码中正则搜索 JWT token（以 eyJ 开头的三段式 base64）
-        /// </summary>
-        private static string? TryExtractTokenFromHtml(string html)
-        {
-            if (string.IsNullOrEmpty(html)) return null;
-
-            // JWT token 格式: eyJxxxxx.eyJxxxxx.xxxxx (三段 base64url)
-            var jwtMatch = System.Text.RegularExpressions.Regex.Match(
-                html, @"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+");
-
-            if (jwtMatch.Success)
-            {
-                Log($"[StarActivityProvider] 策略5: 在 HTML 中发现 JWT token (len={jwtMatch.Value.Length})");
-                return jwtMatch.Value;
-            }
-
-            // 也搜索 Bearer xxxxx 模式
-            var bearerMatch = System.Text.RegularExpressions.Regex.Match(
-                html, @"Bearer\s+(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)");
-            if (bearerMatch.Success)
-            {
-                Log($"[StarActivityProvider] 策略5: 在 HTML 中发现 Bearer token (len={bearerMatch.Groups[1].Value.Length})");
-                return bearerMatch.Groups[1].Value;
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// 回退方案：当 Token 提取全部失败时，尝试直接在 WebView 内通过原生 fetch 获取活动数据。
+        /// 回退方案：当 Token 提取失败时，尝试直接在 WebView 内通过原生 fetch 获取活动数据。
         /// WebView 中已登录，fetch 可能通过 cookie/session 鉴权成功。
         /// </summary>
         private static async Task<string?> TryFetchDataInWebViewAsync(
