@@ -781,47 +781,55 @@ namespace wish_drom.Services.DataProviders
 
                 foreach (var item in root.EnumerateArray())
                 {
-                    // 每个元素可能是序列化的 JSON 字符串，需要反序列化
-                    JsonElement activityObj;
-                    if (item.ValueKind == JsonValueKind.String)
+                    // innerDoc 需要在整个处理逻辑完成后才释放，用 try/finally 控制生命周期
+                    JsonDocument? innerDoc = null;
+                    try
                     {
-                        using var innerDoc = JsonDocument.Parse(item.GetString()!);
-                        activityObj = innerDoc.RootElement;
+                        JsonElement activityObj;
+                        if (item.ValueKind == JsonValueKind.String)
+                        {
+                            innerDoc = JsonDocument.Parse(item.GetString()!);
+                            activityObj = innerDoc.RootElement;
+                        }
+                        else
+                        {
+                            activityObj = item;
+                        }
+
+                        var title = GetString(activityObj, "title");
+                        if (string.IsNullOrWhiteSpace(title))
+                            continue;
+
+                        var activity = new CampusActivity
+                        {
+                            Title = title,
+                            Source = GetString(activityObj, "mainBoardUnit") ?? "STAR平台",
+                            ActivityDate = GetTimestampAsDateTime(activityObj, "activityStartTime") ?? DateTime.MinValue,
+                            Location = GetString(activityObj, "addr"),
+                            Link = BuildActivityLink(GetLong(activityObj, "id")),
+                            SyncTime = now
+                        };
+
+                        // 构建描述信息：状态 + 学分 + 浏览量
+                        var descParts = new List<string>();
+                        var progressName = GetNestedString(activityObj, "progress", "name");
+                        if (!string.IsNullOrEmpty(progressName))
+                            descParts.Add(progressName);
+                        var points = GetDouble(activityObj, "points");
+                        if (points > 0)
+                            descParts.Add($"学分: {points}");
+                        var pageViews = GetInt(activityObj, "pageViews");
+                        if (pageViews > 0)
+                            descParts.Add($"浏览: {pageViews}");
+                        if (descParts.Count > 0)
+                            activity.Description = string.Join(" | ", descParts);
+
+                        result.Add(activity);
                     }
-                    else
+                    finally
                     {
-                        activityObj = item;
+                        innerDoc?.Dispose();
                     }
-
-                    var title = GetString(activityObj, "title");
-                    if (string.IsNullOrWhiteSpace(title))
-                        continue;
-
-                    var activity = new CampusActivity
-                    {
-                        Title = title,
-                        Source = GetString(activityObj, "mainBoardUnit") ?? "STAR平台",
-                        ActivityDate = GetTimestampAsDateTime(activityObj, "activityStartTime") ?? DateTime.MinValue,
-                        Location = GetString(activityObj, "addr"),
-                        Link = BuildActivityLink(GetLong(activityObj, "id")),
-                        SyncTime = now
-                    };
-
-                    // 构建描述信息：状态 + 学分 + 浏览量
-                    var descParts = new List<string>();
-                    var progressName = GetNestedString(activityObj, "progress", "name");
-                    if (!string.IsNullOrEmpty(progressName))
-                        descParts.Add(progressName);
-                    var points = GetDouble(activityObj, "points");
-                    if (points > 0)
-                        descParts.Add($"学分: {points}");
-                    var pageViews = GetInt(activityObj, "pageViews");
-                    if (pageViews > 0)
-                        descParts.Add($"浏览: {pageViews}");
-                    if (descParts.Count > 0)
-                        activity.Description = string.Join(" | ", descParts);
-
-                    result.Add(activity);
                 }
             }
             catch (JsonException ex)
