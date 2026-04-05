@@ -28,6 +28,7 @@ namespace wish_drom.Services
         private readonly IScheduleDataReader _scheduleDataReader;
         private readonly ISecureDataStorage _secureStorage;
         private readonly ISchoolCalendarService _calendarService;
+        private readonly IActivityDataReader _activityDataReader;
         private Kernel? _kernel;
         private IChatCompletionService? _chatService;
         private string? _apiKey;
@@ -39,12 +40,14 @@ namespace wish_drom.Services
             AppDbContext dbContext,
             IScheduleDataReader scheduleDataReader,
             ISecureDataStorage secureStorage,
-            ISchoolCalendarService calendarService)
+            ISchoolCalendarService calendarService,
+            IActivityDataReader activityDataReader)
         {
             _dbContext = dbContext;
             _scheduleDataReader = scheduleDataReader;
             _secureStorage = secureStorage;
             _calendarService = calendarService;
+            _activityDataReader = activityDataReader;
         }
 
         public async Task<bool> IsConfiguredAsync()
@@ -155,6 +158,10 @@ namespace wish_drom.Services
             builder.Plugins.AddFromObject(new SchedulePlugin(_scheduleDataReader, _secureStorage, _calendarService));
             Log("[ChatService] 已注册插件: SchedulePlugin");
 
+            // 注册活动插件
+            builder.Plugins.AddFromObject(new ActivityPlugin(_activityDataReader));
+            Log("[ChatService] 已注册插件: ActivityPlugin");
+
             _kernel = builder.Build();
             _chatService = _kernel.GetRequiredService<IChatCompletionService>();
         }
@@ -181,7 +188,7 @@ namespace wish_drom.Services
             return result;
         }
 
-        private string GetSystemPrompt()
+                private string GetSystemPrompt()
         {
             return @"你是一个智能校园助手，主要职责是帮助学生管理课表和查询校园活动。
 
@@ -216,6 +223,7 @@ namespace wish_drom.Services
 ## 回答格式
 使用简洁友好的语言，适当使用emoji让回答更生动。";
         }
+
 
         public string StartNewSession()
         {
@@ -331,7 +339,14 @@ namespace wish_drom.Services
                 || m.Contains("周六")
                 || m.Contains("周日")
                 || m.Contains("schedule")
-                || m.Contains("course");
+                || m.Contains("course")
+                || m.Contains("活动")
+                || m.Contains("讲座")
+                || m.Contains("比赛")
+                || m.Contains("社团")
+                || m.Contains("演出")
+                || m.Contains("展览")
+                || m.Contains("activity");
         }
 
         public async Task<List<(string Role, string Content)>> GetSessionHistoryAsync(

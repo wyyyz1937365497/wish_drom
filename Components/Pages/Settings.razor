@@ -189,7 +189,10 @@
 
             <div class="action-buttons">
                 <button class="action-btn secondary db-debug-btn" @onclick="NavigateToScheduleDbDebug">
-                    🧪 查看课表数据库
+                    📚 查看课表数据库
+                </button>
+                <button class="action-btn secondary db-debug-btn" @onclick="NavigateToActivityDbDebug">
+                    🎉 查看活动数据库
                 </button>
             </div>
         </section>
@@ -958,5 +961,10 @@
     private void NavigateToScheduleDbDebug()
     {
         Navigation.NavigateTo("/schedule-db-debug");
+    }
+
+    private void NavigateToActivityDbDebug()
+    {
+        Navigation.NavigateTo("/activity-db-debug");
     }
 }
