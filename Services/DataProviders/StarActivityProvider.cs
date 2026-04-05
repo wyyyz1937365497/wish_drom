@@ -137,7 +137,16 @@ namespace wish_drom.Services.DataProviders
                 // 检查返回码
                 if (!root.TryGetProperty("code", out var codeEl) || codeEl.GetInt32() != 0)
                 {
-                    Log($"[StarActivityProvider] API 返回错误码: {codeEl.GetInt32()}");
+                    var errorCode = codeEl.GetInt32();
+                    Log($"[StarActivityProvider] API 返回错误码: {errorCode}");
+
+                    // 业务层面的鉴权失败（HTTP 200 但 code 为 401/403）
+                    if (errorCode == 401 || errorCode == 403)
+                    {
+                        await secureStorage.RemoveAsync(TOKEN_KEY);
+                        throw new AuthExpiredException("STAR 平台凭证已失效，请重新登录");
+                    }
+
                     break;
                 }
 

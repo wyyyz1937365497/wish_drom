@@ -1,0 +1,250 @@
+@page "/activity-db-debug"
+@using wish_drom.Data.Entities
+@using wish_drom.Services.Interfaces
+@inject IActivityDataReader ActivityDataReader
+@inject NavigationManager Navigation
+
+<div class="db-debug-page">
+    <header class="app-bar">
+        <button class="back-btn" @onclick="NavigateBack">←</button>
+        <h1 class="app-title">活动数据库</h1>
+        <button class="refresh-btn" @onclick="LoadDataAsync">刷新</button>
+    </header>
+
+    <div class="content">
+        @if (isLoading)
+        {
+            <p class="hint">正在加载数据库...</p>
+        }
+        else
+        {
+            <section class="card">
+                <h2>总览</h2>
+                <p>总记录数: @allActivities.Count</p>
+                <p>来源数: @sourceGroups.Count</p>
+                <p>最近同步: @(lastSyncTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "无")</p>
+            </section>
+
+            <section class="card">
+                <h2>按来源统计</h2>
+                @if (sourceGroups.Count == 0)
+                {
+                    <p class="hint">暂无数据</p>
+                }
+                else
+                {
+                    @foreach (var g in sourceGroups)
+                    {
+                        <p>@g.Source: @g.Count 条</p>
+                    }
+                }
+            </section>
+
+            <section class="card">
+                <h2>按月份统计</h2>
+                @if (monthGroups.Count == 0)
+                {
+                    <p class="hint">暂无数据</p>
+                }
+                else
+                {
+                    @foreach (var g in monthGroups)
+                    {
+                        <p>@g.Month: @g.Count 条</p>
+                    }
+                }
+            </section>
+
+            <section class="card">
+                <h2>记录明细 (前 @previewActivities.Count 条)</h2>
+                @if (previewActivities.Count == 0)
+                {
+                    <p class="hint">暂无数据，请先去数据同步页面抓取活动。</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>标题</th>
+                                    <th>来源</th>
+                                    <th>日期</th>
+                                    <th>地点</th>
+                                    <th>描述</th>
+                                    <th>链接</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var a in previewActivities)
+                                {
+                                    <tr>
+                                        <td>@a.Title</td>
+                                        <td>@a.Source</td>
+                                        <td>@a.ActivityDate.ToString("yyyy-MM-dd")</td>
+                                        <td>@(a.Location ?? "-")</td>
+                                        <td>@(a.Description ?? "-")</td>
+                                        <td>
+                                            @if (!string.IsNullOrEmpty(a.Link))
+                                            {
+                                                <a href="@a.Link" target="_blank">查看</a>
+                                            }
+                                            else
+                                            {
+                                                <span>-</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+        }
+    </div>
+</div>
+
+<style>
+    .db-debug-page {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background: #f6f7fb;
+    }
+
+    .app-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px;
+        background: #1f3558;
+        color: #fff;
+    }
+
+    .back-btn,
+    .refresh-btn {
+        border: none;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: rgba(255,255,255,0.16);
+        color: #fff;
+        cursor: pointer;
+    }
+
+    .app-title {
+        flex: 1;
+        margin: 0;
+        font-size: 18px;
+    }
+
+    .content {
+        padding: 12px;
+        overflow-y: auto;
+    }
+
+    .card {
+        background: #fff;
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .card h2 {
+        margin: 0 0 8px 0;
+        font-size: 15px;
+        color: #1f3558;
+    }
+
+    .hint {
+        color: #6b7280;
+        margin: 0;
+    }
+
+    .table-wrap {
+        overflow-x: auto;
+    }
+
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 760px;
+        font-size: 13px;
+    }
+
+    th,
+    td {
+        border-bottom: 1px solid #e5e7eb;
+        text-align: left;
+        padding: 8px;
+        vertical-align: top;
+    }
+
+    th {
+        background: #f8fafc;
+        color: #334155;
+        position: sticky;
+        top: 0;
+    }
+
+    td a {
+        color: #1f3558;
+        text-decoration: none;
+    }
+
+    td a:hover {
+        text-decoration: underline;
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private List<CampusActivity> allActivities = new();
+    private List<CampusActivity> previewActivities = new();
+    private List<(string Source, int Count)> sourceGroups = new();
+    private List<(string Month, int Count)> monthGroups = new();
+    private DateTime? lastSyncTime;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        allActivities = await ActivityDataReader.GetAllActivitiesAsync();
+        allActivities = allActivities
+            .OrderByDescending(a => a.ActivityDate)
+            .ToList();
+
+        previewActivities = allActivities.Take(200).ToList();
+
+        sourceGroups = allActivities
+            .GroupBy(a => string.IsNullOrWhiteSpace(a.Source) ? "(未知)" : a.Source)
+            .OrderByDescending(g => g.Count())
+            .Select(g => (g.Key, g.Count()))
+            .ToList();
+
+        monthGroups = allActivities
+            .Where(a => a.ActivityDate != DateTime.MinValue)
+            .GroupBy(a => a.ActivityDate.ToString("yyyy-MM"))
+            .OrderByDescending(g => g.Key)
+            .Select(g => (g.Key, g.Count()))
+            .ToList();
+
+        lastSyncTime = allActivities.Count > 0
+            ? allActivities.Max(a => a.SyncTime)
+            : null;
+
+        isLoading = false;
+    }
+
+    private void NavigateBack()
+    {
+        Navigation.NavigateTo("/settings");
+    }
+}
