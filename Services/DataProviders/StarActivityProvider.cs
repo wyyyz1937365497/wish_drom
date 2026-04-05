@@ -531,14 +531,14 @@ namespace wish_drom.Services.DataProviders
                             SyncTime = now
                         };
 
-                        // 构建描述信息：状态 + 学分 + 浏览量
+                        // 构建描述信息：状态 + 星星数量 + 浏览量
                         var descParts = new List<string>();
                         var progressName = GetNestedString(activityObj, "progress", "name");
                         if (!string.IsNullOrEmpty(progressName))
                             descParts.Add(progressName);
                         var points = GetDouble(activityObj, "points");
                         if (points > 0)
-                            descParts.Add($"学分: {points}");
+                            descParts.Add($"星星数量: {points}");
                         var pageViews = GetInt(activityObj, "pageViews");
                         if (pageViews > 0)
                             descParts.Add($"浏览: {pageViews}");
