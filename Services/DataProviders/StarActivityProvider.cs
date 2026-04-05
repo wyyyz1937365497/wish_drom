@@ -531,8 +531,20 @@ namespace wish_drom.Services.DataProviders
                             SyncTime = now
                         };
 
-                        // 构建描述信息：状态 + 星星数量 + 浏览量
+                        // 构建描述信息：分类 + 状态 + 星星数量 + 浏览量
                         var descParts = new List<string>();
+                        var moduleName = GetString(activityObj, "module");
+                        var category = moduleName switch
+                        {
+                            "lixing" => "力行之星",
+                            "qiusuo" => "求索之星",
+                            "hongwen" => "弘文之星",
+                            "mingde"  => "明德之星",
+                            "shizhi"  => "矢志之星",
+                            _         => moduleName
+                        };
+                        if (!string.IsNullOrEmpty(category))
+                            descParts.Add(category);
                         var progressName = GetNestedString(activityObj, "progress", "name");
                         if (!string.IsNullOrEmpty(progressName))
                             descParts.Add(progressName);
