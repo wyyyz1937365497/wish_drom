@@ -66,6 +66,15 @@ namespace wish_drom
             });
             builder.Services.AddSingleton<TongjiScheduleProvider>();
 
+            // STAR 活动平台 Provider 私有数据库与实现
+            builder.Services.AddSingleton<StarActivityDbContext>(sp =>
+            {
+                var dbContext = new StarActivityDbContext();
+                dbContext.Database.EnsureCreated();
+                return dbContext;
+            });
+            builder.Services.AddSingleton<StarActivityProvider>();
+
             var app = builder.Build();
 
             // 注册数据源
@@ -78,6 +87,15 @@ namespace wish_drom
                 provider: app.Services.GetRequiredService<TongjiScheduleProvider>(),
                 faviconUrl: "https://1.tongji.edu.cn/favicon.ico",
                 toolDescription: "查询同济大学课程表"
+            );
+
+            dataCaptureService.RegisterProvider(
+                id: "tongji-star-activity",
+                displayName: "同济大学活动",
+                url: "https://star.tongji.edu.cn/app/pages/login/login",
+                provider: app.Services.GetRequiredService<StarActivityProvider>(),
+                faviconUrl: "https://star.tongji.edu.cn/favicon.ico",
+                toolDescription: "查询同济大学校园活动"
             );
 
             return app;
