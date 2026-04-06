@@ -94,7 +94,7 @@ namespace wish_drom
                 displayName: "同济大学活动",
                 url: "https://star.tongji.edu.cn/app/pages/login/login",
                 provider: app.Services.GetRequiredService<StarActivityProvider>(),
-                faviconUrl: "https://star.tongji.edu.cn/favicon.ico",
+                faviconUrl: "/images/star.ico",
                 toolDescription: "查询同济大学校园活动"
             );
 
