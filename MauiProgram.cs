@@ -75,6 +75,15 @@ namespace wish_drom
             });
             builder.Services.AddSingleton<StarActivityProvider>();
 
+            // 一卡通余额 Provider 私有数据库与实现
+            builder.Services.AddSingleton<YikatongBalanceDbContext>(sp =>
+            {
+                var dbContext = new YikatongBalanceDbContext();
+                dbContext.Database.EnsureCreated();
+                return dbContext;
+            });
+            builder.Services.AddSingleton<YikatongBalanceProvider>();
+
             var app = builder.Build();
 
             // 注册数据源
@@ -96,6 +105,15 @@ namespace wish_drom
                 provider: app.Services.GetRequiredService<StarActivityProvider>(),
                 faviconUrl: "/images/star.ico",
                 toolDescription: "查询同济大学校园活动"
+            );
+
+            dataCaptureService.RegisterProvider(
+                id: "yikatong-balance",
+                displayName: "同济一卡通余额",
+                url: "https://all4u.tongji.edu.cn/tj-portal/page/mobile/index",
+                provider: app.Services.GetRequiredService<YikatongBalanceProvider>(),
+                faviconUrl: "/images/yikatong.ico",
+                toolDescription: "查询同济大学一卡通余额"
             );
 
             return app;

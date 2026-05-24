@@ -1,0 +1,248 @@
+@page "/yikatong-db-debug"
+@using Microsoft.EntityFrameworkCore
+@using wish_drom.Data.Entities
+@using wish_drom.Services.DataProviders
+@inject YikatongBalanceDbContext YikatongDbContext
+@inject NavigationManager Navigation
+
+<div class="db-debug-page">
+    <header class="app-bar">
+        <button class="back-btn" @onclick="NavigateBack">←</button>
+        <h1 class="app-title">一卡通数据库</h1>
+        <button class="refresh-btn" @onclick="LoadDataAsync">刷新</button>
+    </header>
+
+    <div class="content">
+        @if (isLoading)
+        {
+            <p class="hint">正在加载数据库...</p>
+        }
+        else
+        {
+            <section class="card">
+                <h2>总览</h2>
+                <p>总记录数: @allBalances.Count</p>
+                <p>最近更新: @(lastUpdateTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "无")</p>
+            </section>
+
+            <section class="card">
+                <h2>当前余额</h2>
+                @if (latestBalance != null)
+                {
+                    <div class="balance-display">
+                        <span class="balance-label">余额</span>
+                        <span class="balance-value">¥@latestBalance.Balance.ToString("F2")</span>
+                    </div>
+                    <p>学号: @(latestBalance.Account ?? "-")</p>
+                    <p>姓名: @(latestBalance.Name ?? "-")</p>
+                    <p>更新时间: @latestBalance.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss")</p>
+                }
+                else
+                {
+                    <p class="hint">暂无数据，请先去数据同步页面抓取一卡通余额。</p>
+                }
+            </section>
+
+            <section class="card">
+                <h2>历史记录</h2>
+                @if (allBalances.Count == 0)
+                {
+                    <p class="hint">暂无数据</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>序号</th>
+                                    <th>余额</th>
+                                    <th>学号</th>
+                                    <th>姓名</th>
+                                    <th>更新时间</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var (idx, b) in allBalances.Select((b, i) => (i, b)))
+                                {
+                                    <tr>
+                                        <td>@(idx + 1)</td>
+                                        <td>¥@b.Balance.ToString("F2")</td>
+                                        <td>@(b.Account ?? "-")</td>
+                                        <td>@(b.Name ?? "-")</td>
+                                        <td>@b.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+
+            <section class="card">
+                <h2>操作</h2>
+                <button class="action-btn danger" @onclick="ClearAllData">
+                    🗑️ 清空所有数据
+                </button>
+            </section>
+        }
+    </div>
+</div>
+
+<style>
+    .db-debug-page {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background: #f6f7fb;
+    }
+
+    .app-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px;
+        background: #1f3558;
+        color: #fff;
+    }
+
+    .back-btn,
+    .refresh-btn {
+        border: none;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: rgba(255,255,255,0.16);
+        color: #fff;
+        cursor: pointer;
+    }
+
+    .app-title {
+        flex: 1;
+        margin: 0;
+        font-size: 18px;
+    }
+
+    .content {
+        padding: 12px;
+        overflow-y: auto;
+    }
+
+    .card {
+        background: #fff;
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .card h2 {
+        margin: 0 0 8px 0;
+        font-size: 15px;
+        color: #1f3558;
+    }
+
+    .hint {
+        color: #6b7280;
+        margin: 0;
+    }
+
+    .balance-display {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 12px;
+    }
+
+    .balance-label {
+        font-size: 14px;
+        color: #6b7280;
+    }
+
+    .balance-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: #1f3558;
+    }
+
+    .table-wrap {
+        overflow-x: auto;
+    }
+
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 500px;
+        font-size: 13px;
+    }
+
+    th,
+    td {
+        border-bottom: 1px solid #e5e7eb;
+        text-align: left;
+        padding: 8px;
+        vertical-align: top;
+    }
+
+    th {
+        background: #f8fafc;
+        color: #334155;
+        position: sticky;
+        top: 0;
+    }
+
+    .action-btn {
+        border: none;
+        border-radius: 8px;
+        padding: 10px 16px;
+        font-size: 14px;
+        cursor: pointer;
+        width: 100%;
+    }
+
+    .action-btn.danger {
+        background: #fee2e2;
+        color: #dc2626;
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private List<YikatongBalance> allBalances = new();
+    private YikatongBalance? latestBalance;
+    private DateTime? lastUpdateTime;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        allBalances = await YikatongDbContext.Balances
+            .OrderByDescending(b => b.UpdatedAt)
+            .ToListAsync();
+
+        latestBalance = allBalances.Count > 0 ? allBalances[0] : null;
+        lastUpdateTime = allBalances.Count > 0
+            ? allBalances.Max(b => b.UpdatedAt)
+            : null;
+
+        isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task ClearAllData()
+    {
+        YikatongDbContext.Balances.RemoveRange(allBalances);
+        await YikatongDbContext.SaveChangesAsync();
+        await LoadDataAsync();
+    }
+
+    private void NavigateBack()
+    {
+        Navigation.NavigateTo("/settings");
+    }
+}
