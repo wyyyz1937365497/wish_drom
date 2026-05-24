@@ -32,7 +32,6 @@ namespace wish_drom.Services.DataProviders
         private const string BALANCE_API = "/berserker-app/ykt/tsm/queryCard?synAccessSource=h5";
 
         private const string JWT_USER_KEY = "yikatong_jwt_user";
-        private const string TGC_KEY = "yikatong_tgc";
         private const string BEARER_TOKEN_KEY = "yikatong_bearer_token";
 
         public bool IsReadyForExtraction(string currentUrl, string html)
@@ -80,13 +79,6 @@ namespace wish_drom.Services.DataProviders
                 else
                 {
                     Log("[YikatongProvider] Cookie 提取失败（可能为 HttpOnly），尝试使用 Token");
-                }
-
-                var bearerToken = await TryGetBearerTokenAsync(evaluateJavaScript);
-                if (!string.IsNullOrEmpty(bearerToken))
-                {
-                    await secureStorage.SetAsync(BEARER_TOKEN_KEY, bearerToken);
-                    Log("[YikatongProvider] Bearer Token 已存储");
                 }
 
                 // 检查 Token 是否已存在（从 URL 提取的）
@@ -149,7 +141,6 @@ namespace wish_drom.Services.DataProviders
 
                 var content = await response.Content.ReadAsStringAsync();
                 Log($"[YikatongProvider] API 响应: {content.Length} 字符");
-                Log($"[YikatongProvider] API 响应内容: {content}");
 
                 return content;
             }
@@ -258,16 +249,16 @@ namespace wish_drom.Services.DataProviders
                 var name = card.TryGetProperty("name", out var nameEl)
                     ? nameEl.GetString() ?? ""
                     : "";
-                var sno = card.TryGetProperty("sno", out var snoEl)
+                var sno = card.TryGetProperty("card_name_en", out var snoEl)
                     ? snoEl.GetString() ?? ""
                     : "";
 
-                Log($"[YikatongProvider] 解析成功: 账号={account}, 姓名={name}, 学号={sno}, 余额={balanceInYuan:F2} 元");
+                Log($"[YikatongProvider] 解析成功: 学号={sno}, 姓名={name}, 余额={balanceInYuan:F2} 元");
 
                 return new YikatongBalance
                 {
                     Balance = balanceInYuan,
-                    Account = account,
+                    Account = sno,
                     Name = name,
                     UpdatedAt = DateTime.Now
                 };
@@ -290,21 +281,8 @@ namespace wish_drom.Services.DataProviders
         {
             try
             {
-                var cookies = await EvaluateWithRetryAsync(evaluateJavaScript,
-                    "document.cookie");
-
-                if (string.IsNullOrEmpty(cookies))
-                {
-                    cookies = await EvaluateWithRetryAsync(evaluateJavaScript,
-                        "cookieStore.getAll().then(c=>c.map(x=>x.name+'='+x.value).join('; '))");
-                }
-
-                // 降级：使用平台原生 Cookie API
-                if (string.IsNullOrEmpty(cookies))
-                {
-                    Log("[YikatongProvider] JavaScript Cookie 提取失败，尝试原生 Cookie API");
-                    cookies = await EvaluateWithRetryAsync(evaluateJavaScript, "__native_cookies__");
-                }
+                Log("[YikatongProvider] 使用原生 Cookie API 提取 Cookie");
+                var cookies = await EvaluateWithRetryAsync(evaluateJavaScript, "__native_cookies__");
 
                 if (string.IsNullOrEmpty(cookies)) return null;
 
@@ -318,58 +296,6 @@ namespace wish_drom.Services.DataProviders
             catch (Exception ex)
             {
                 Log($"[YikatongProvider] Cookie 提取失败: {ex.Message}");
-                return null;
-            }
-        }
-
-        private static async Task<string?> TryGetBearerTokenAsync(Func<string, Task<string?>> evaluateJavaScript)
-        {
-            try
-            {
-                var token = await EvaluateWithRetryAsync(evaluateJavaScript,
-                    "localStorage.getItem('synjones-auth')");
-
-                if (string.IsNullOrEmpty(token))
-                {
-                    var authHeader = await TryInterceptAuthHeaderAsync(evaluateJavaScript);
-                    return authHeader;
-                }
-
-                return NormalizeJavaScriptValue(token);
-            }
-            catch (Exception ex)
-            {
-                Log($"[YikatongProvider] Bearer Token 提取失败: {ex.Message}");
-                return null;
-            }
-        }
-
-        private static async Task<string?> TryInterceptAuthHeaderAsync(Func<string, Task<string?>> evaluateJavaScript)
-        {
-            try
-            {
-                await evaluateJavaScript("XMLHttpRequest.prototype.sH=XMLHttpRequest.prototype.setRequestHeader");
-                await evaluateJavaScript("window.__fn=String.fromCharCode(102,117,110,99,116,105,111,110)");
-                await evaluateJavaScript("window.__xf=window.__fn+'(k,v){if(k.toLowerCase()==\"synjones-auth\")window.__auth_t=v;return this.sH.apply(this,arguments)}'");
-                await evaluateJavaScript("window.__auth_t=''");
-                await evaluateJavaScript("eval('XMLHttpRequest.prototype.setRequestHeader='+window.__xf)");
-
-                await evaluateJavaScript("fetch('/berserker-app/ykt/tsm/queryCard?synAccessSource=h5').then(r=>r.text()).then(d=>window.__resp=d)");
-
-                await Task.Delay(2000);
-
-                var token = NormalizeJavaScriptValue(await evaluateJavaScript("window.__auth_t||''"));
-                if (!string.IsNullOrEmpty(token))
-                {
-                    return StripBearerPrefix(token);
-                }
-
-                var localStorageToken = NormalizeJavaScriptValue(await evaluateJavaScript("localStorage.getItem('synjones-auth')"));
-                return StripBearerPrefix(localStorageToken);
-            }
-            catch (Exception ex)
-            {
-                Log($"[YikatongProvider] Header 拦截失败: {ex.Message}");
                 return null;
             }
         }
@@ -390,36 +316,6 @@ namespace wish_drom.Services.DataProviders
                 }
             }
             return null;
-        }
-
-        private static string? NormalizeJavaScriptValue(string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return null;
-
-            var trimmed = value.Trim();
-            if (trimmed == "null" || trimmed == "undefined") return null;
-
-            if (trimmed.Length >= 2 && trimmed.StartsWith('"') && trimmed.EndsWith('"'))
-            {
-                try
-                {
-                    return JsonSerializer.Deserialize<string>(trimmed) ?? trimmed.Trim('"');
-                }
-                catch
-                {
-                    return trimmed.Trim('"');
-                }
-            }
-
-            return trimmed;
-        }
-
-        private static string? StripBearerPrefix(string? token)
-        {
-            if (string.IsNullOrEmpty(token)) return null;
-            if (token.StartsWith("bearer ", StringComparison.OrdinalIgnoreCase))
-                return token.Substring(7);
-            return token;
         }
     }
 }
