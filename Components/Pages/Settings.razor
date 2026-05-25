@@ -1,6 +1,10 @@
 @page "/settings"
+@using Microsoft.EntityFrameworkCore
+@using wish_drom.Data.Entities
+@using wish_drom.Services.DataProviders
 @inject IChatService ChatService
 @inject NavigationManager Navigation
+@inject YikatongBalanceDbContext YikatongDbContext
 
 <div class="settings-page">
     @* 顶部应用栏 *@
@@ -184,6 +188,14 @@
                             <span class="stat-label">对话</span>
                         </div>
                     </div>
+                    <div class="stat-divider"></div>
+                    <div class="stat-item">
+                        <div class="stat-icon yikatong">💳</div>
+                        <div class="stat-content">
+                            <span class="stat-value">¥@(yikatongBalance?.ToString("F2") ?? "-")</span>
+                            <span class="stat-label">一卡通</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -193,6 +205,9 @@
                 </button>
                 <button class="action-btn secondary db-debug-btn" @onclick="NavigateToActivityDbDebug">
                     🎉 查看活动数据库
+                </button>
+                <button class="action-btn secondary db-debug-btn" @onclick="NavigateToYikatongDbDebug">
+                    💳 查看一卡通数据库
                 </button>
             </div>
         </section>
@@ -644,6 +659,10 @@
         background: #E3F2FD;
     }
 
+    .stat-icon.yikatong {
+        background: #FFF8E1;
+    }
+
     .stat-value {
         font-size: 24px;
         font-weight: 700;
@@ -763,6 +782,7 @@
     private int courseCount = 0;
     private int activityCount = 0;
     private int chatHistoryCount = 0;
+    private decimal? yikatongBalance = null;
     private List<string> availableModels = new();
 
     protected override async Task OnInitializedAsync()
@@ -782,7 +802,23 @@
 
     private async Task LoadDataStats()
     {
-        await Task.CompletedTask;
+        await LoadYikatongBalanceAsync();
+    }
+
+    private async Task LoadYikatongBalanceAsync()
+    {
+        try
+        {
+            var latestBalance = await YikatongDbContext.Balances
+                .OrderByDescending(b => b.UpdatedAt)
+                .FirstOrDefaultAsync();
+
+            yikatongBalance = latestBalance?.Balance;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载一卡通余额失败: {ex.Message}");
+        }
     }
 
     // 预设配置
@@ -966,5 +1002,10 @@
     private void NavigateToActivityDbDebug()
     {
         Navigation.NavigateTo("/activity-db-debug");
+    }
+
+    private void NavigateToYikatongDbDebug()
+    {
+        Navigation.NavigateTo("/yikatong-db-debug");
     }
 }

@@ -219,7 +219,28 @@ namespace wish_drom.Services
                             }
                             else
                             {
-                                statusLabel.Text = $"请登录...\nURL: {urlToCheck}";
+                                // 一卡通特殊提示
+                                if (source.Id == "yikatong-balance" && urlToCheck.Contains("pay-yikatong.tongji.edu.cn"))
+                                {
+                                    if (urlToCheck.Contains("/plat/wode"))
+                                    {
+                                        var htmlLen = html?.Length ?? 0;
+                                        var hasError = html?.Contains("403") == true || html?.Contains("Forbidden") == true || html?.Contains("越权") == true;
+                                        statusLabel.Text = $"一卡通页面已加载\nHTML: {htmlLen} 字符{(hasError ? " (含错误)" : "")}\n等待完全加载...";
+                                    }
+                                    else if (urlToCheck.Contains("/plat/shouyeUser"))
+                                    {
+                                        statusLabel.Text = $"一卡通首页\n请点击进入我的页面";
+                                    }
+                                    else
+                                    {
+                                        statusLabel.Text = $"请点击进入一卡通页面\nURL: {urlToCheck}";
+                                    }
+                                }
+                                else
+                                {
+                                    statusLabel.Text = $"请登录...\nURL: {urlToCheck}";
+                                }
                                 extractButton.IsEnabled = false;
                             }
                         });
@@ -240,7 +261,8 @@ namespace wish_drom.Services
                     try
                     {
                         var html = await _currentWebView.EvaluateJavaScriptAsync("document.documentElement.outerHTML");
-                        var currentUrl = _currentWebView.Source?.ToString() ?? source.Url;
+                        var jsUrl = await _currentWebView.EvaluateJavaScriptAsync("window.location.href");
+                        var currentUrl = NormalizeJavaScriptResult(jsUrl) ?? source.Url;
 
                         Log($"[DataCapture] 开始提取，当前 URL: {currentUrl}，HTML 长度: {html?.Length ?? 0}");
 
@@ -257,6 +279,23 @@ namespace wish_drom.Services
                         Func<string, Task<string?>> jsExecutor = ExecuteJavaScriptForProviderAsync;
 
                         statusLabel.Text = "正在提取凭证...";
+
+                        // 一卡通特殊处理：从 URL 参数提取 synjones-auth Token
+                        if (source.Id == "yikatong-balance" && !string.IsNullOrEmpty(currentUrl))
+                        {
+                            var uri = new Uri(currentUrl);
+                            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                            var urlToken = query["synjones-auth"];
+                            if (!string.IsNullOrEmpty(urlToken))
+                            {
+                                var strippedToken = urlToken.StartsWith("bearer ", StringComparison.OrdinalIgnoreCase)
+                                    ? urlToken.Substring(7)
+                                    : urlToken;
+                                await _secureStorage.SetAsync("yikatong_bearer_token", strippedToken);
+                                Log($"[DataCapture] 从 URL 参数提取 synjones-auth Token 成功");
+                            }
+                        }
+
                         Log("[DataCapture] 阶段一：开始 ExtractDataAsync");
                         var extractResult = await source.Provider.ExtractDataAsync(html, _secureStorage, jsExecutor);
                         Log($"[DataCapture] 阶段一结果: {extractResult}");
@@ -375,7 +414,37 @@ namespace wish_drom.Services
                                 Log($"[WebView-Poll] URL 变化: {_lastPolledUrl} -> {currentHref}");
                                 _lastPolledUrl = currentHref;
 
-                                var isReady = source.Provider.IsReadyForExtraction(currentHref, "");
+                                // 一卡通特殊处理：从 URL 参数提取 Token
+                                if (source.Id == "yikatong-balance" && currentHref.Contains("synjones-auth"))
+                                {
+                                    try
+                                    {
+                                        var normalizedUrl = NormalizeJavaScriptResult(currentHref);
+                                        if (!string.IsNullOrEmpty(normalizedUrl))
+                                        {
+                                            var uri = new Uri(normalizedUrl);
+                                            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                                            var urlToken = query["synjones-auth"];
+                                            if (!string.IsNullOrEmpty(urlToken))
+                                            {
+                                                var strippedToken = urlToken.StartsWith("bearer ", StringComparison.OrdinalIgnoreCase)
+                                                    ? urlToken.Substring(7)
+                                                    : urlToken;
+                                                await _secureStorage.SetAsync("yikatong_bearer_token", strippedToken);
+                                                Log($"[WebView-Poll] 从 URL 参数提取 synjones-auth Token 成功 ({strippedToken.Length} 字符)");
+                                            }
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Log($"[WebView-Poll] Token 提取失败: {ex.Message}");
+                                    }
+                                }
+
+                                var html = await MainThread.InvokeOnMainThreadAsync(async () =>
+                                    await _currentWebView.EvaluateJavaScriptAsync("document.documentElement.outerHTML"));
+
+                                var isReady = source.Provider.IsReadyForExtraction(currentHref, html ?? "");
                                 if (isReady)
                                 {
                                     Log($"[WebView-Poll] IsReadyForExtraction=true，启用提取按钮");
@@ -460,7 +529,7 @@ namespace wish_drom.Services
             // 简单表达式优先直接执行，避免额外包装带来的不确定性。
             if (IsSimpleExpression(expression))
             {
-                var directResult = await EvaluateJavaScriptWithTimeoutAsync(expression, 8000);
+                var directResult = await EvaluateJavaScriptWithTimeoutAsync(expression, 15000);
                 var normalizedDirect = NormalizeJavaScriptResult(directResult);
                 if (!string.IsNullOrEmpty(normalizedDirect) ||
                     !expression.Contains("document.cookie", StringComparison.OrdinalIgnoreCase))
