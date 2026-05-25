@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using wish_drom.Models;
 using wish_drom.Data.Entities;
 using wish_drom.Services.Interfaces;
+using Microsoft.Maui.Storage;
 
 namespace wish_drom.Services.DataProviders
 {
@@ -16,10 +17,12 @@ namespace wish_drom.Services.DataProviders
     public class YikatongBalanceProvider : IDataProvider
     {
         private readonly YikatongBalanceDbContext _dbContext;
+        private readonly YikatongTransactionDbContext _transactionDbContext;
 
-        public YikatongBalanceProvider(YikatongBalanceDbContext dbContext)
+        public YikatongBalanceProvider(YikatongBalanceDbContext dbContext, YikatongTransactionDbContext transactionDbContext)
         {
             _dbContext = dbContext;
+            _transactionDbContext = transactionDbContext;
         }
 
         private static void Log(string msg)
@@ -30,6 +33,7 @@ namespace wish_drom.Services.DataProviders
 
         private const string API_BASE = "https://pay-yikatong.tongji.edu.cn";
         private const string BALANCE_API = "/berserker-app/ykt/tsm/queryCard?synAccessSource=h5";
+        private const string TRANSACTIONS_API = "/berserker-search/search/personal/turnover?size=8&current={0}&synAccessSource=h5";
 
         private const string JWT_USER_KEY = "yikatong_jwt_user";
         private const string BEARER_TOKEN_KEY = "yikatong_bearer_token";
@@ -170,6 +174,17 @@ namespace wish_drom.Services.DataProviders
                     await _dbContext.SaveChangesAsync();
 
                     Log($"[YikatongProvider] 余额已保存: {balance.Balance:F2} 元");
+
+                    // 余额保存成功后，获取消费记录
+                    try
+                    {
+                        await FetchAndPersistTransactionsAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"[YikatongProvider] 消费记录获取失败（不影响余额）: {ex.Message}");
+                    }
+
                     return new PersistResult
                     {
                         Success = true,
@@ -316,6 +331,174 @@ namespace wish_drom.Services.DataProviders
                 }
             }
             return null;
+        }
+
+        private async Task FetchAndPersistTransactionsAsync()
+        {
+            try
+            {
+                // 重新获取凭证
+                var secureStorage = new AppSecureDataStorage();
+                var cookieString = await secureStorage.GetAsync(JWT_USER_KEY);
+                var bearerToken = await secureStorage.GetAsync(BEARER_TOKEN_KEY);
+
+                if (string.IsNullOrEmpty(cookieString) || string.IsNullOrEmpty(bearerToken))
+                {
+                    Log("[YikatongProvider] 消费记录: 凭证未找到，跳过");
+                    return;
+                }
+
+                using var handler = new HttpClientHandler { UseCookies = false };
+                using var client = new HttpClient(handler)
+                {
+                    BaseAddress = new Uri(API_BASE),
+                    Timeout = TimeSpan.FromSeconds(15)
+                };
+
+                client.DefaultRequestHeaders.Add("Cookie", cookieString);
+                client.DefaultRequestHeaders.Add("synjones-auth", $"bearer {bearerToken}");
+                client.DefaultRequestHeaders.Add("synaccesssource", "h5");
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+                client.DefaultRequestHeaders.Add("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0");
+
+                // 获取数据库中已存在的 orderId
+                var existingOrderIds = await _transactionDbContext.Transactions
+                    .Select(t => t.OrderId)
+                    .ToListAsync();
+
+                var allRecords = new List<JsonElement>();
+                int totalNew = 0;
+
+                // 获取 7 页数据
+                for (int page = 1; page <= 7; page++)
+                {
+                    var url = string.Format(TRANSACTIONS_API, page);
+                    Log($"[YikatongProvider] 获取消费记录第 {page} 页");
+
+                    var response = await client.GetAsync(url);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        Log($"[YikatongProvider] 第 {page} 页请求失败: {response.StatusCode}");
+                        break;
+                    }
+
+                    var content = await response.Content.ReadAsStringAsync();
+                    var document = JsonDocument.Parse(content);
+                    var root = document.RootElement;
+
+                    if (!root.TryGetProperty("data", out var dataEl) ||
+                        !dataEl.TryGetProperty("records", out var recordsEl))
+                    {
+                        Log($"[YikatongProvider] 第 {page} 页数据格式异常");
+                        break;
+                    }
+
+                    if (recordsEl.ValueKind != JsonValueKind.Array || recordsEl.GetArrayLength() == 0)
+                    {
+                        Log($"[YikatongProvider] 第 {page} 页无数据，停止翻页");
+                        break;
+                    }
+
+                    foreach (var record in recordsEl.EnumerateArray())
+                    {
+                        if (record.TryGetProperty("orderId", out var orderIdEl))
+                        {
+                            var orderId = orderIdEl.GetString();
+                            if (!string.IsNullOrEmpty(orderId) && !existingOrderIds.Contains(orderId))
+                            {
+                                allRecords.Add(record);
+                            }
+                        }
+                    }
+
+                    if (allRecords.Count - totalNew == 0)
+                    {
+                        Log($"[YikatongProvider] 第 {page} 页无新记录，停止翻页");
+                        break;
+                    }
+
+                    totalNew = allRecords.Count;
+                    Log($"[YikatongProvider] 第 {page} 页完成，累计新记录: {totalNew}");
+                }
+
+                if (allRecords.Count > 0)
+                {
+                    var transactions = allRecords
+                        .Select(ParseTransactionFromJson)
+                        .Where(t => t != null)
+                        .Cast<YikatongTransaction>()
+                        .ToList();
+
+                    await _transactionDbContext.Transactions.AddRangeAsync(transactions);
+                    await _transactionDbContext.SaveChangesAsync();
+
+                    Log($"[YikatongProvider] 消费记录已保存: {transactions.Count} 条");
+                }
+                else
+                {
+                    Log("[YikatongProvider] 消费记录无新数据");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"[YikatongProvider] 消费记录获取异常: {ex.Message}");
+            }
+        }
+
+        private YikatongTransaction? ParseTransactionFromJson(JsonElement record)
+        {
+            try
+            {
+                var orderId = record.TryGetProperty("orderId", out var orderIdEl)
+                    ? orderIdEl.GetString() ?? ""
+                    : "";
+
+                if (string.IsNullOrEmpty(orderId))
+                    return null;
+
+                // 解析交易时间
+                DateTime transactionTime = DateTime.MinValue;
+                if (record.TryGetProperty("jndatetime", out var jndatetimeEl))
+                {
+                    if (DateTime.TryParse(jndatetimeEl.GetString(), out var parsedTime))
+                    {
+                        transactionTime = parsedTime;
+                    }
+                }
+
+                // 解析金额（分转元）
+                decimal amount = 0;
+                if (record.TryGetProperty("tranamt", out var tranamtEl))
+                {
+                    amount = tranamtEl.GetInt64() / 100.0m;
+                }
+
+                // 解析余额（分转元）
+                decimal balance = 0;
+                if (record.TryGetProperty("cardBalance", out var cardBalanceEl))
+                {
+                    balance = cardBalanceEl.GetInt64() / 100.0m;
+                }
+
+                return new YikatongTransaction
+                {
+                    OrderId = orderId,
+                    TransactionDateTime = transactionTime,
+                    Amount = amount,
+                    Balance = balance,
+                    Description = record.TryGetProperty("resume", out var resumeEl) ? resumeEl.GetString() : "",
+                    TurnoverType = record.TryGetProperty("turnoverType", out var turnoverTypeEl) ? turnoverTypeEl.GetString() : "",
+                    LocationName = record.TryGetProperty("locationName", out var locationNameEl) ? locationNameEl.GetString() : "",
+                    PayName = record.TryGetProperty("payName", out var payNameEl) ? payNameEl.GetString() : "",
+                    UpdatedAt = DateTime.Now
+                };
+            }
+            catch (Exception ex)
+            {
+                Log($"[YikatongProvider] 解析交易记录失败: {ex.Message}");
+                return null;
+            }
         }
     }
 }

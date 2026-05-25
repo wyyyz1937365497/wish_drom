@@ -3,6 +3,7 @@
 @using wish_drom.Data.Entities
 @using wish_drom.Services.DataProviders
 @inject YikatongBalanceDbContext YikatongDbContext
+@inject YikatongTransactionDbContext YikatongTransactionDbContext
 @inject NavigationManager Navigation
 
 <div class="db-debug-page">
@@ -76,6 +77,51 @@
                             </tbody>
                         </table>
                     </div>
+                }
+            </section>
+
+            <section class="card">
+                <h2>消费记录</h2>
+                <p>总记录数: @allTransactions.Count</p>
+                @if (allTransactions.Count == 0)
+                {
+                    <p class="hint">暂无数据，同步余额时会自动获取消费记录。</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>时间</th>
+                                    <th>金额</th>
+                                    <th>余额</th>
+                                    <th>类型</th>
+                                    <th>描述</th>
+                                    <th>位置</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var t in allTransactions.Take(50))
+                                {
+                                    <tr>
+                                        <td>@(t.TransactionDateTime > DateTime.MinValue ? t.TransactionDateTime.ToString("MM-dd HH:mm") : "-")</td>
+                                        <td>@(t.Amount >= 0 ? "+" : "")¥@t.Amount.ToString("F2")</td>
+                                        <td>¥@t.Balance.ToString("F2")</td>
+                                        <td>@(t.TurnoverType ?? "-")</td>
+                                        <td>@(t.Description ?? "-")</td>
+                                        <td>@(t.LocationName ?? "-")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                @if (allTransactions.Count > 0)
+                {
+                    <button class="action-btn danger" @onclick="ClearTransactions" style="margin-top: 12px;">
+                        🗑️ 清空消费记录
+                    </button>
                 }
             </section>
 
@@ -210,6 +256,7 @@
     private List<YikatongBalance> allBalances = new();
     private YikatongBalance? latestBalance;
     private DateTime? lastUpdateTime;
+    private List<YikatongTransaction> allTransactions = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -225,6 +272,10 @@
             .OrderByDescending(b => b.UpdatedAt)
             .ToListAsync();
 
+        allTransactions = await YikatongTransactionDbContext.Transactions
+            .OrderByDescending(t => t.TransactionDateTime)
+            .ToListAsync();
+
         latestBalance = allBalances.Count > 0 ? allBalances[0] : null;
         lastUpdateTime = allBalances.Count > 0
             ? allBalances.Max(b => b.UpdatedAt)
@@ -238,6 +289,13 @@
     {
         YikatongDbContext.Balances.RemoveRange(allBalances);
         await YikatongDbContext.SaveChangesAsync();
+        await LoadDataAsync();
+    }
+
+    private async Task ClearTransactions()
+    {
+        YikatongTransactionDbContext.Transactions.RemoveRange(allTransactions);
+        await YikatongTransactionDbContext.SaveChangesAsync();
         await LoadDataAsync();
     }
 
