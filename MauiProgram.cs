@@ -82,6 +82,12 @@ namespace wish_drom
                 dbContext.Database.EnsureCreated();
                 return dbContext;
             });
+            builder.Services.AddSingleton<YikatongTransactionDbContext>(sp =>
+            {
+                var dbContext = new YikatongTransactionDbContext();
+                dbContext.Database.EnsureCreated();
+                return dbContext;
+            });
             builder.Services.AddSingleton<YikatongBalanceProvider>();
 
             var app = builder.Build();
