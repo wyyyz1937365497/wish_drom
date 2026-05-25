@@ -106,7 +106,7 @@
                                 {
                                     <tr>
                                         <td>@(t.TransactionDateTime > DateTime.MinValue ? t.TransactionDateTime.ToString("MM-dd HH:mm") : "-")</td>
-                                        <td>@(t.Amount >= 0 ? "+" : "")¥@t.Amount.ToString("F2")</td>
+                                        <td>¥@t.Amount.ToString("F2")</td>
                                         <td>¥@t.Balance.ToString("F2")</td>
                                         <td>@(t.TurnoverType ?? "-")</td>
                                         <td>@(t.Description ?? "-")</td>
